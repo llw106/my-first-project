@@ -59,6 +59,7 @@ import top.yukonga.miuix.kmp.theme.lightColorScheme
 internal data class CustomBottomBarConfig(
     val glass: Boolean,
     val blurRadius: Int,
+    val gradientBlur: Boolean,
     val hideLabels: Boolean,
     val showBadges: Boolean,
     val vibrationEnabled: Boolean,
@@ -167,6 +168,9 @@ private fun FloatingNavigationBar(
             tabsCount = NAV_ITEMS.size,
             isBlurEnabled = config.glass,
             blurRadius = config.blurRadius.dp,
+            // 6.3.8 同款：底部渐变模糊交给 GradientBlurVeil（打在页面内容区，不受胶囊裁剪），
+            // 胶囊自身保持普通模糊，避免两层渐变叠加走样。
+            gradientBlur = false,
             floating = true,
             overlayContent = {
                 NAV_ITEMS.indices.forEach { index ->

@@ -8,6 +8,7 @@ object FloatingBottomBarSettings {
     const val KEY_STYLE = "custom_bottom_bar_style"
     const val KEY_GLASS = "custom_bottom_bar_glass"
     const val KEY_BLUR_RADIUS = "custom_bottom_bar_blur_radius"
+    const val KEY_GRADIENT_BLUR = "custom_bottom_bar_gradient_blur"
     const val KEY_HIDE_LABELS = "custom_bottom_bar_hide_labels"
     const val KEY_SHOW_BADGES = "custom_bottom_bar_show_discovery_badge"
     const val KEY_VIBRATION_ENABLED = "custom_bottom_bar_vibration_enabled"
@@ -22,6 +23,7 @@ object FloatingBottomBarSettings {
     const val DEFAULT_ENABLE = false
     const val DEFAULT_GLASS = true
     const val DEFAULT_BLUR_RADIUS = 8
+    const val DEFAULT_GRADIENT_BLUR = true
     const val DEFAULT_HIDE_LABELS = false
     const val DEFAULT_SHOW_BADGES = true
     const val DEFAULT_VIBRATION_ENABLED = true

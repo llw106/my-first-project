@@ -896,6 +896,10 @@ private class CustomBottomBarRuntime(
                     FloatingBottomBarSettings.DEFAULT_BLUR_RADIUS
                 )
             ),
+            gradientBlur = floatingPrefs.getBoolean(
+                FloatingBottomBarSettings.KEY_GRADIENT_BLUR,
+                FloatingBottomBarSettings.DEFAULT_GRADIENT_BLUR
+            ),
             hideLabels = floatingPrefs.getBoolean(
                 FloatingBottomBarSettings.KEY_HIDE_LABELS,
                 FloatingBottomBarSettings.DEFAULT_HIDE_LABELS
@@ -995,6 +999,7 @@ private class CustomBottomBarRuntime(
             FloatingBottomBarSettings.KEY_STYLE,
             FloatingBottomBarSettings.KEY_GLASS,
             FloatingBottomBarSettings.KEY_BLUR_RADIUS,
+            FloatingBottomBarSettings.KEY_GRADIENT_BLUR,
             FloatingBottomBarSettings.KEY_HIDE_LABELS,
             FloatingBottomBarSettings.KEY_SHOW_BADGES,
             FloatingBottomBarSettings.KEY_VIBRATION_ENABLED,
@@ -1368,6 +1373,12 @@ private class CustomBottomBarHost(
             owner.installComposition(composeView)
         }
     }
+    /**
+     * 底部渐变模糊：移植自 6.3.8 实测生效的 smali `f9/gb.smali`。
+     * 作用对象是「本宿主的兄弟节点里面积最大的可见 View」（页面内容区），
+     * 所以渐变带从底栏顶边一路铺到屏幕底部，不受胶囊形状裁剪。
+     */
+    private val gradientBlurVeil = GradientBlurVeil(composeHost)
     private val preDrawListener = ViewTreeObserver.OnPreDrawListener {
         if (applied.get()) {
             if (enforce()) {
@@ -1465,6 +1476,8 @@ private class CustomBottomBarHost(
         if (showOverlay) clearBottomBlur(root) else restoreBottomBlur(root)
         navigationAppearance.enforce()
         composeHost.visibility = if (showOverlay) View.VISIBLE else View.GONE
+        runCatching { gradientBlurVeil.update(showOverlay, configState.value.gradientBlur) }
+            .onFailure { logger("底部渐变模糊更新失败", it) }
         if (composeHost.parent !== parent && parent.isAttachedToWindow) {
             attachComposeHost()
         }
@@ -1539,6 +1552,7 @@ private class CustomBottomBarHost(
         val observer = root.viewTreeObserver
         if (observer.isAlive) observer.removeOnPreDrawListener(preDrawListener)
         composeHost.visibility = View.GONE
+        runCatching { gradientBlurVeil.clear() }
         restoreBottomBlur(root)
     }
 
@@ -1643,6 +1657,7 @@ private class CustomBottomBarHost(
 
     private fun restoreHierarchy() {
         composeHost.removeCallbacks(pendingSelectionTimeout)
+        runCatching { gradientBlurVeil.clear() }
         pendingSelectedIndex = null
         runCatching { composeView.disposeComposition() }
         runCatching { (composeHost.parent as? ViewGroup)?.removeView(composeHost) }

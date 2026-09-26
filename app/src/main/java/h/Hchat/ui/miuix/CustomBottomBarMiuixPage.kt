@@ -310,6 +310,11 @@ internal fun FloatingBottomBarMiuixPage(
             )
         )
     }
+    var gradientBlur by remember {
+        mutableStateOf(
+            sp.getBoolean(FloatingBottomBarSettings.KEY_GRADIENT_BLUR, FloatingBottomBarSettings.DEFAULT_GRADIENT_BLUR)
+        )
+    }
     var hideLabels by remember {
         mutableStateOf(sp.getBoolean(FloatingBottomBarSettings.KEY_HIDE_LABELS, FloatingBottomBarSettings.DEFAULT_HIDE_LABELS))
     }
@@ -416,6 +421,16 @@ internal fun FloatingBottomBarMiuixPage(
                                 )
                             }
                         }
+                        InsetDivider()
+                        SwitchRow(
+                            checked = gradientBlur,
+                            title = "底部渐变模糊",
+                            summary = "在悬浮底栏下方区域形成由浅到深的渐变模糊",
+                            onCheckedChange = {
+                                gradientBlur = it
+                                sp.edit().putBoolean(FloatingBottomBarSettings.KEY_GRADIENT_BLUR, it).apply()
+                            }
+                        )
                         InsetDivider()
                         SwitchRow(
                             checked = hideLabels,

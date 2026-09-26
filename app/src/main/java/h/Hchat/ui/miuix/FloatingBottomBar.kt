@@ -65,6 +65,8 @@ import h.Hchat.ui.miuix.animation.InteractiveHighlight
 import androidx.compose.foundation.isSystemInDarkTheme
 import top.yukonga.miuix.kmp.blur.Backdrop
 import top.yukonga.miuix.kmp.blur.blur
+import top.yukonga.miuix.kmp.blur.ProgressiveBlur
+import top.yukonga.miuix.kmp.blur.progressiveBlur
 import top.yukonga.miuix.kmp.blur.drawBackdrop
 import top.yukonga.miuix.kmp.blur.highlight.BloomStroke
 import top.yukonga.miuix.kmp.blur.highlight.Highlight
@@ -242,6 +244,7 @@ fun FloatingBottomBar(
     tabsCount: Int,
     isBlurEnabled: Boolean = true,
     blurRadius: Dp = 4.dp,
+    gradientBlur: Boolean = false,
     floating: Boolean = true,
     overlayContent: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable RowScope.((Int) -> Unit) -> Unit
@@ -254,6 +257,8 @@ fun FloatingBottomBar(
     val containerColor = if (effectiveBlurEnabled) surfaceContainer.copy(0.4f) else surfaceContainer
 
     val tabsBackdrop = rememberLayerBackdrop()
+    val gradientSpec: ProgressiveBlur? =
+        if (gradientBlur) ProgressiveBlur(angle = 270f, startFraction = 0f, endFraction = 1f, curve = 0.5f) else null
     val density = LocalDensity.current
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
     val animationScope = rememberCoroutineScope()
@@ -400,12 +405,17 @@ fun FloatingBottomBar(
                             shape = { pillShape },
                             effects = {
                                 vibrancy()
-                                blur(blurRadius.toPx(), blurRadius.toPx())
+                                if (gradientSpec != null) {
+                                    progressiveBlur(blurRadius.toPx(), blurRadius.toPx(), gradientSpec)
+                                } else {
+                                    blur(blurRadius.toPx(), blurRadius.toPx())
+                                }
                                 lens(
                                     refractionHeight = 24.dp.toPx(),
                                     refractionAmount = 24.dp.toPx(),
                                 )
                             },
+                            progressiveGradient = gradientSpec,
                             highlight = { baseHighlight.copy(alpha = 0.75f) },
                             layerBlock = {
                                 val width = size.width.coerceAtLeast(1f)

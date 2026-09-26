@@ -667,7 +667,7 @@ private class VoiceForwardHooker(
         if (menuItem.itemId != MENU_FORWARD_ID && menuItem.itemId != MENU_SAVE_ID) return
         if (menuItem.itemId == MENU_FORWARD_ID && !chatForwardEnabled()) return
         if (menuItem.itemId == MENU_SAVE_ID && !chatSaveEnabled()) return
-        val message = resolveNativeMessage(args)
+        val message = resolveNativeMessage(args) { isVoiceMessage(it) }
         val activity = resolveActivity(args.getOrNull(1))
         if (message == null || activity == null) {
             toast(activity, "语音消息不可用")
@@ -1131,22 +1131,22 @@ private class VoiceForwardHooker(
         return null
     }
 
-    private fun resolveNativeMessage(source: Any?): Any? {
-        return resolveNativeMessage(source, Collections.newSetFromMap(WeakHashMap<Any, Boolean>()), 0)
+    private fun resolveNativeMessage(source: Any?, predicate: (Any) -> Boolean = { true }): Any? {
+        return resolveNativeMessage(source, Collections.newSetFromMap(WeakHashMap<Any, Boolean>()), 0, predicate)
     }
 
-    private fun resolveNativeMessage(source: Any?, visited: MutableSet<Any>, depth: Int): Any? {
+    private fun resolveNativeMessage(source: Any?, visited: MutableSet<Any>, depth: Int, predicate: (Any) -> Boolean): Any? {
         if (source == null || depth > 5 || !visited.add(source)) return null
-        if (isLikelyNativeMessage(source) && messageId(source) > 0L) return source
+        if (isLikelyNativeMessage(source) && messageId(source) > 0L && predicate(source)) return source
         val className = source.javaClass.name
         if (className.startsWith("java.") || className.startsWith("android.")) return null
-        if (source is View) return resolveNativeMessage(source.tag, visited, depth + 1)
+        if (source is View) return resolveNativeMessage(source.tag, visited, depth + 1, predicate)
         if (source is Array<*>) {
-            source.forEach { item -> resolveNativeMessage(item, visited, depth + 1)?.let { return it } }
+            source.forEach { item -> resolveNativeMessage(item, visited, depth + 1, predicate)?.let { return it } }
             return null
         }
         if (source is Collection<*>) {
-            source.forEach { item -> resolveNativeMessage(item, visited, depth + 1)?.let { return it } }
+            source.forEach { item -> resolveNativeMessage(item, visited, depth + 1, predicate)?.let { return it } }
             return null
         }
         var current: Class<*>? = source.javaClass
@@ -1155,7 +1155,7 @@ private class VoiceForwardHooker(
                 val type = field.type
                 if (type.isPrimitive || type.isArray || type == String::class.java) continue
                 val value = KavaReflector.readField(field, source) ?: continue
-                resolveNativeMessage(value, visited, depth + 1)?.let { return it }
+                resolveNativeMessage(value, visited, depth + 1, predicate)?.let { return it }
             }
             current = current.superclass
         }
@@ -1183,7 +1183,17 @@ private class VoiceForwardHooker(
 
     private fun resolveVoiceSource(message: Any): VoiceSource? {
         val fileName = voiceFileName(message)
-        val path = WeChatApis.media()?.voices()?.resolvePath(message, fileName).orEmpty()
+        if (fileName.isBlank()) return null
+        var path = WeChatApis.media()?.voices()?.resolvePath(message, fileName).orEmpty()
+        if (path.isBlank() || !File(path).isFile) {
+            // 兜底：文件可能尚未落盘，短轮询重试（最多 3 x 100ms）
+            var attempt = 0
+            while (attempt < 3 && (path.isBlank() || !File(path).isFile)) {
+                Thread.sleep(100)
+                path = WeChatApis.media()?.voices()?.resolvePath(message, fileName).orEmpty()
+                attempt++
+            }
+        }
         if (path.isBlank() || !File(path).isFile) return null
         return VoiceSource(path, resolveVoiceDuration(message, fileName))
     }
