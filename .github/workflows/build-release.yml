@@ -1,0 +1,97 @@
+name: 构建正式包（R8）
+
+# 说明：
+#  - 需要签名证书时优先用 secrets.HCAT_KEYSTORE_BASE64；
+#  - 没有配置 secret 就现场生成一张本地自签名证书，保证任何仓库都能直接出包；
+#  - 产物走 Actions artifact，不发布 Release、不推 Telegram。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 版本名
+        required: false
+        default: 6.6.6.patch6
+      version_code:
+        description: 版本号（整数）
+        required: false
+        default: "565"
+      apk_name:
+        description: 产物文件名
+        required: false
+        default: Hchat-6.6.6.patch6-signed.apk
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-release.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HCAT_VERSION_NAME: ${{ github.event.inputs.version_name || '6.6.6.patch6' }}
+      HCAT_VERSION_CODE: ${{ github.event.inputs.version_code || '565' }}
+      HCAT_APK_NAME: ${{ github.event.inputs.apk_name || 'Hchat-6.6.6.patch6-signed.apk' }}
+      HCAT_STORE_PASSWORD: ${{ secrets.HCAT_STORE_PASSWORD || 'hchat123456' }}
+      HCAT_KEY_ALIAS: ${{ secrets.HCAT_KEY_ALIAS || 'hchat' }}
+      HCAT_KEY_PASSWORD: ${{ secrets.HCAT_KEY_PASSWORD || 'hchat123456' }}
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: 配置 Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-37
+            build-tools;37.0.0
+
+      - name: Gradle 缓存
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: 准备签名证书
+        env:
+          HCAT_KEYSTORE_BASE64: ${{ secrets.HCAT_KEYSTORE_BASE64 }}
+        run: |
+          set -e
+          chmod +x ./gradlew
+          mkdir -p app/keystore
+          if [ -n "$HCAT_KEYSTORE_BASE64" ]; then
+            echo "使用 secrets 中的证书"
+            printf '%s' "$HCAT_KEYSTORE_BASE64" | base64 -d > "app/keystore/。。.jks"
+          else
+            echo "未配置 HCAT_KEYSTORE_BASE64，现场生成自签名证书"
+            keytool -genkeypair -v \
+              -keystore "app/keystore/。。.jks" \
+              -storepass "$HCAT_STORE_PASSWORD" \
+              -keypass "$HCAT_KEY_PASSWORD" \
+              -alias "$HCAT_KEY_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Hchat Local, OU=Dev, O=Local, L=NA, ST=NA, C=CN"
+          fi
+
+      - name: 构建 release（R8 开启）
+        run: |
+          set -e
+          echo "版本: ${HCAT_VERSION_NAME} (${HCAT_VERSION_CODE})"
+          grep -n "isMinifyEnabled\|isShrinkResources" app/build.gradle.kts || true
+          sh ./gradlew :app:assembleRelease --no-daemon -x lintVitalAnalyzeRelease
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hchat-release
+          path: dist/*.apk
+          if-no-files-found: error
