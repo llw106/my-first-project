@@ -89,6 +89,8 @@ jobs:
           if [ -n "$HCAT_KEYSTORE_BASE64" ]; then
             echo "使用 secrets 中的证书"
             printf '%s' "$HCAT_KEYSTORE_BASE64" | base64 -d > "app/keystore/。。.jks"
+          elif [ -f "app/keystore/。。.jks" ]; then
+            echo "未配置 HCAT_KEYSTORE_BASE64，使用仓库内置固定证书"
           else
             echo "未配置 HCAT_KEYSTORE_BASE64，现场生成自签名证书"
             keytool -genkeypair -v \
