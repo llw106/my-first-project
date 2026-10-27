@@ -3,6 +3,7 @@ name: 构建正式包（R8）
 # 说明：
 #  - 需要签名证书时优先用 secrets.HCAT_KEYSTORE_BASE64；
 #  - 没有配置 secret 就现场生成一张本地自签名证书，保证任何仓库都能直接出包；
+#  - SDK 组件用 sdkmanager 尽力安装（失败不中断），缺的交给 AGP 自动下载；
 #  - 产物走 Actions artifact，不发布 Release、不推 Telegram。
 
 on:
@@ -50,11 +51,17 @@ jobs:
 
       - name: 配置 Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platform-tools
-            platforms;android-37
-            build-tools;37.0.0
+
+      - name: 安装 SDK 组件（尽力而为）
+        run: |
+          set -x
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          yes 2>/dev/null | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "platform-tools" >/dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-37" "build-tools;37.0.0" 2>&1 | tail -5 || true
+          sdkmanager --install --channel=3 "platforms;android-37" "build-tools;37.0.0" 2>&1 | tail -5 || true
+          echo "--- 已安装平台 ---"; ls "$ANDROID_SDK_ROOT/platforms" 2>/dev/null || true
+          echo "--- 已安装 build-tools ---"; ls "$ANDROID_SDK_ROOT/build-tools" 2>/dev/null || true
 
       - name: Gradle 缓存
         uses: gradle/actions/setup-gradle@v4
@@ -87,7 +94,7 @@ jobs:
           set -e
           echo "版本: ${HCAT_VERSION_NAME} (${HCAT_VERSION_CODE})"
           grep -n "isMinifyEnabled\|isShrinkResources" app/build.gradle.kts || true
-          sh ./gradlew :app:assembleRelease --no-daemon -x lintVitalAnalyzeRelease
+          sh ./gradlew :app:assembleRelease --no-daemon -x lintVitalAnalyzeRelease --stacktrace
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
