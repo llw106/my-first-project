@@ -6,17 +6,44 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import h.Hchat.preferences.HchatStorage
 import h.Hchat.utils.HLog
+import h.Hchat.utils.MemoryTrimController
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
-import java.util.concurrent.ConcurrentHashMap
+import java.util.LinkedHashMap
 
 object CustomFriendAvatarStore {
-    private data class CacheEntry(val modified: Long, val size: Long, val bitmap: Bitmap)
+    private data class CacheEntry(
+        val modified: Long,
+        val size: Long,
+        val bytes: Long,
+        val bitmap: Bitmap
+    )
 
-    private val cache = ConcurrentHashMap<String, CacheEntry>()
+    private const val MAX_CACHE_ENTRIES = 128
+    private const val MAX_CACHE_BYTES = 16L * 1024 * 1024
+    private val cache = LinkedHashMap<String, CacheEntry>(16, 0.75f, true)
+    private var cacheBytes = 0L
+
+    // 头像位图缓存上限 16MB，属于纯可重建内容（文件还在磁盘上）。
+    // 内存紧张时整块丢弃，下次渲染重新解码即可。
+    private val trimHook = MemoryTrimController.Trimmer { _ ->
+        synchronized(cache) {
+            val had = cache.isNotEmpty()
+            cache.clear()
+            cacheBytes = 0L
+            had
+        }
+    }
+    private var trimHookInstalled = false
+
+    private fun ensureTrimHook() {
+        if (trimHookInstalled) return
+        trimHookInstalled = true
+        MemoryTrimController.register(trimHook)
+    }
 
     @JvmStatic
     fun configuredFriends(context: Context): Set<String> {
@@ -43,14 +70,26 @@ object CustomFriendAvatarStore {
         val id = wxid?.trim().orEmpty()
         if (id.isEmpty()) return null
         val file = avatarFile(context, id)
-        if (!file.isFile || file.length() <= 0L) return null
-        cache[id]?.takeIf {
-            it.modified == file.lastModified() && it.size == file.length() && !it.bitmap.isRecycled
-        }?.let { return it.bitmap }
+        if (!file.isFile || file.length() <= 0L) {
+            removeCached(id)
+            return null
+        }
+        synchronized(cache) {
+            cache[id]?.let {
+                if (it.modified == file.lastModified() &&
+                    it.size == file.length() &&
+                    !it.bitmap.isRecycled
+                ) {
+                    return it.bitmap
+                }
+                cache.remove(id)
+                cacheBytes -= it.bytes
+            }
+        }
         val decoded = runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
             ?.takeIf { !it.isRecycled && it.width > 0 && it.height > 0 }
             ?: return null
-        cache[id] = CacheEntry(file.lastModified(), file.length(), decoded)
+        putCached(id, file.lastModified(), file.length(), decoded)
         return decoded
     }
 
@@ -117,7 +156,7 @@ object CustomFriendAvatarStore {
                     .putStringSet(CustomFriendAvatarSettings.KEY_CONFIGURED_FRIENDS, ids)
                     .apply()
             }
-            cache.remove(id)
+            removeCached(id)
             true
         }.getOrElse {
             HLog.e("$TAG 保存自定义头像失败: wxid=$id, error=${it.message}", it)
@@ -136,13 +175,35 @@ object CustomFriendAvatarStore {
         CustomFriendAvatarSettings.preferences(context).edit()
             .putStringSet(CustomFriendAvatarSettings.KEY_CONFIGURED_FRIENDS, ids)
             .apply()
-        cache.remove(id)
+        removeCached(id)
         return deleted
     }
 
     @JvmStatic
     fun invalidate(wxid: String?) {
-        wxid?.trim()?.takeIf { it.isNotEmpty() }?.let(cache::remove)
+        wxid?.trim()?.takeIf { it.isNotEmpty() }?.let(::removeCached)
+    }
+
+    private fun putCached(id: String, modified: Long, size: Long, bitmap: Bitmap) {
+        val bytes = bitmap.allocationByteCount.toLong().coerceAtLeast(0L)
+        if (bytes == 0L || bytes > MAX_CACHE_BYTES) return
+        ensureTrimHook()
+        synchronized(cache) {
+            cache.remove(id)?.let { cacheBytes -= it.bytes }
+            cache[id] = CacheEntry(modified, size, bytes, bitmap)
+            cacheBytes += bytes
+            val iterator = cache.entries.iterator()
+            while ((cache.size > MAX_CACHE_ENTRIES || cacheBytes > MAX_CACHE_BYTES) && iterator.hasNext()) {
+                cacheBytes -= iterator.next().value.bytes
+                iterator.remove()
+            }
+        }
+    }
+
+    private fun removeCached(id: String) {
+        synchronized(cache) {
+            cache.remove(id)?.let { cacheBytes -= it.bytes }
+        }
     }
 
     private fun avatarFile(context: Context, wxid: String): File {

@@ -39,7 +39,9 @@ import java.lang.reflect.Constructor
 import java.lang.reflect.Member
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
+import java.lang.ref.WeakReference
 import java.util.Collections
+import java.util.LinkedHashMap
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 
@@ -92,8 +94,16 @@ private class CustomFriendAvatarRuntime(
     private val drawableWxids = Collections.synchronizedMap(WeakHashMap<Any, String>())
     private val drawableSurfaces = Collections.synchronizedMap(WeakHashMap<Any, AvatarSurface>())
     private val drawableRadiusFactors = Collections.synchronizedMap(WeakHashMap<Any, Float>())
-    private val conversationBindings = Collections.synchronizedMap(WeakHashMap<MenuItem, Pair<Activity, String>>())
-    private val conversationGroupAvatarCache = ConcurrentHashMap<String, CachedGroupAvatar>()
+    private val conversationBindings = Collections.synchronizedMap(
+        WeakHashMap<MenuItem, ConversationBinding>()
+    )
+    private val conversationGroupAvatarCache = Collections.synchronizedMap(
+        object : LinkedHashMap<String, CachedGroupAvatar>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedGroupAvatar>): Boolean {
+                return size > GROUP_CACHE_MAX_ENTRIES
+            }
+        }
+    )
     private val conversationMenuExtension = object : ConversationMenuExtension {
         override val itemId: Int = CONVERSATION_MENU_ID
         override val order: Int = 120
@@ -276,7 +286,7 @@ private class CustomFriendAvatarRuntime(
                 val item = menu.add(groupId, CONVERSATION_MENU_ID, 0, MENU_TITLE)
                 moveMenuItemToFront(menu, item)
                 val activity = resolveActivity(param.thisObject) ?: return
-                conversationBindings[item] = activity to target
+                conversationBindings[item] = ConversationBinding(WeakReference(activity), target)
                 installConversationClick(param.thisObject)
             }
         })
@@ -298,8 +308,9 @@ private class CustomFriendAvatarRuntime(
                 val clicked = param.args.getOrNull(0) as? MenuItem ?: return
                 if (clicked.itemId != CONVERSATION_MENU_ID) return
                 val target = conversationBindings.remove(clicked) ?: return
+                val activity = target.activity.get() ?: return
                 param.result = null
-                showAvatarActions(target.first, target.second)
+                showAvatarActions(activity, target.wxid)
             }
         })
     }
@@ -487,6 +498,7 @@ private class CustomFriendAvatarRuntime(
         const val NATIVE_RADIUS_FACTOR = 0.1f
         const val MAX_RADIUS_FACTOR = 0.5f
         const val GROUP_CACHE_MS = 1000L
+        const val GROUP_CACHE_MAX_ENTRIES = 256
         const val ORIGINAL_GROUP_WXID = "hchat_original_group_wxid"
         val DRAW_PAINT = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     }
@@ -501,6 +513,11 @@ private class CustomFriendAvatarRuntime(
     private data class CachedGroupAvatar(
         val loadedAt: Long,
         val group: h.Hchat.hooks.items.conversationgroup.ConversationGroup?
+    )
+
+    private data class ConversationBinding(
+        val activity: WeakReference<Activity>,
+        val wxid: String
     )
 
     private fun locateAvatarMembers(): AvatarMembers? {

@@ -2,6 +2,7 @@ package h.Hchat.hooks.core
 
 import h.Hchat.event.Events
 import h.Hchat.hooks.items.settings.SettingsFeature
+import h.Hchat.hooks.items.conversationgroup.ConversationGroupHomeProjection
 import h.Hchat.preferences.TermsGate
 import h.Hchat.utils.HLog
 import java.util.Collections
@@ -76,6 +77,9 @@ class FeatureManager {
     }
 
     fun destroyAll(context: FeatureContext) {
+        DexInstallScheduler.cancelAll()
+        // 先使旧安装租约失效，不等待后台定位，也不允许销毁后重新挂钩。
+        HookRegistry.get().unhookAll()
         for (i in installedFeatures.size - 1 downTo 0) {
             val feature = installedFeatures[i]
             try {
@@ -85,7 +89,8 @@ class FeatureManager {
             }
         }
         installedFeatures.clear()
-        HookRegistry.get().unhookAll()
+        // 首页投影由聊天分组与标签栏共享，只在全量卸载后复位。
+        ConversationGroupHomeProjection.resetAfterUnhookAll()
     }
 
     private fun safeName(feature: Feature): String {

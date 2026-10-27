@@ -1,0 +1,96 @@
+package h.Hchat.hooks.items.conversationtabs
+
+import android.content.SharedPreferences
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.ViewTreeObserver
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
+import android.widget.RelativeLayout
+import android.widget.FrameLayout
+import de.robv.android.xposed.XC_MethodHook
+import h.Hchat.hooks.core.FeatureContext
+import h.Hchat.hooks.core.HookRegistry
+import h.Hchat.hooks.items.conversationgroup.ConversationGroupHomeProjection
+import h.Hchat.preferences.HchatStorage
+import h.Hchat.utils.HLog
+import h.Hchat.utils.KavaReflector
+import java.lang.ref.WeakReference
+import java.util.WeakHashMap
+import java.util.concurrent.atomic.AtomicLong
+
+// Configuration I/O and tab contents are fixtures. Lifecycle, attachment, measurement,
+// positioning, observer cleanup, and margin restoration are extracted verbatim.
+internal object ConversationTabsRuntime {
+    // PRODUCTION_CONSTANTS
+    private val main = MainQueueFixture()
+    private val worker = WorkerQueueFixture()
+    private val reloadLock = Any()
+    private val revision = AtomicLong()
+    private val lifecycle = AtomicLong()
+    private var pendingDelivery: Runnable? = null
+    private val hosts = WeakHashMap<Any, WeakReference<Host>>()
+    private var context: FeatureContext? = null
+    private var hookedMainUi: Class<*>? = null
+    private var listener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+    private var filter: Any? = null
+    private var loadedIcons: Map<String, Any> = emptyMap()
+    private var compiledFilters: Map<String, Any> = emptyMap()
+    private val bitmaps = BitmapCacheFixture()
+    var reloads = 0
+        private set
+    var renders = 0
+        private set
+    private var fixtureEnabled = true
+
+    // PRODUCTION_HOST
+    // PRODUCTION_METHODS
+
+    private fun clearChangedAccount() = Unit
+    private fun reload() {
+        if (context == null) return
+        reloads++
+        liveHosts().forEach(::render)
+    }
+    private fun render(host: Host) {
+        renders++
+        setHostEnabled(host, context != null && fixtureEnabled)
+    }
+    fun setEnabled(enabled: Boolean) { fixtureEnabled = enabled; liveHosts().forEach(::render) }
+    fun hostCount() = liveHosts().size
+    fun root(owner: Any) = hosts[owner]?.get()?.root
+    fun strip(owner: Any): HorizontalScrollView? = hosts[owner]?.get()?.strip
+    fun retainedHost(owner: Any): Any? = hosts[owner]?.get()
+    fun hostTagKey() = HOST_TAG_ID
+    fun reset() {
+        liveHosts().forEach(::removeHost)
+        hosts.clear()
+        synchronized(reloadLock) { invalidateLoads() }
+        revision.set(0)
+        lifecycle.set(0)
+        main.pending.clear()
+        context = null
+        hookedMainUi = null
+        listener = null
+        filter = null
+        loadedIcons = emptyMap()
+        compiledFilters = emptyMap()
+        reloads = 0
+        renders = 0
+        fixtureEnabled = true
+        HookRegistry.get().reset()
+        HchatStorage.prefs.registrations = 0
+        HLog.errors.clear()
+    }
+}
+
+internal class BitmapCacheFixture { fun evictAll() = Unit }
+// Configuration loading is replaced, but production invalidation still clears real
+// mutable queues and removes the identical pending callback rather than a no-op stub.
+internal class WorkerQueueFixture { val queue = ArrayDeque<Runnable>() }
+internal class MainQueueFixture {
+    val pending = arrayListOf<Runnable>()
+    fun removeCallbacks(callback: Runnable) { pending.removeAll { it === callback } }
+}
+internal object ConversationTabsStore { const val PREFS_NAME = "conversation_tabs" }

@@ -14,9 +14,18 @@ class ConversationGroupFeature : BaseFeature() {
     }
 
     override fun onFeatureInstall(context: FeatureContext) {
+        val generation = ConversationGroupRuntime.beginInstall()
         DexInstallScheduler.schedule(ID, name(), stage = DexInstallScheduler.Stage.BRIDGE) {
-            ConversationGroupRuntime.install(context)
+            if (!ConversationGroupRuntime.isInstallGenerationActive(generation)) {
+                true
+            } else {
+                ConversationGroupRuntime.install(context, generation)
+            }
         }
+    }
+
+    override fun onFeatureDestroy(context: FeatureContext) {
+        ConversationGroupRuntime.destroy(context)
     }
 
     companion object {

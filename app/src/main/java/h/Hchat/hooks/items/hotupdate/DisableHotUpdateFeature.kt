@@ -191,8 +191,11 @@ class DisableHotUpdateFeature : BaseFeature() {
                     return
                 }
                 var count = 0
-                val cached = DexMethodCache.loadList(cache, runtimeKey, classLoader, "sync_response_consumer")
-                    .filter { isSyncResponseConsumer(it, responseClass) }
+                // push 进程使用不同的 ClassLoader，但同一微信版本仍可复用主进程已经确认的描述符。
+                // 只比较版本/包体等运行时身份，不能因加载器指纹不同而清空缓存并重新扫描。
+                val cached = DexMethodCache.loadListCrossProcess(cache, runtimeKey, classLoader, "sync_response_consumer")
+                // 描述符只有在主进程通过参数校验后才会写入；跨 ClassLoader 时不要再用
+                // 主进程的 Class 对象做一次身份比较，否则会把有效缓存误判为空。
                 val methods = cached.ifEmpty {
                     dexKit.findMethod(
                         FindMethod().apply {
@@ -205,8 +208,12 @@ class DisableHotUpdateFeature : BaseFeature() {
                             ?.takeIf { method -> isSyncResponseConsumer(method, responseClass) }
                     }
                 }
-                if (methods.isNotEmpty()) DexMethodCache.saveList(cache, runtimeKey, "sync_response_consumer", methods)
-                else DexMethodCache.clear(cache, runtimeKey, "sync_response_consumer")
+                // 跨进程命中时不要用当前进程的 ClassLoader 指纹重写总缓存键，
+                // 否则会清掉同一运行时下其它入口的已验证描述符。
+                if (cached.isEmpty()) {
+                    if (methods.isNotEmpty()) DexMethodCache.saveList(cache, runtimeKey, "sync_response_consumer", methods)
+                    else DexMethodCache.clear(cache, runtimeKey, "sync_response_consumer")
+                }
                 methods.forEach { method ->
                     HookRegistry.get().hook(method, object : XC_MethodHook() {
                         override fun beforeHookedMethod(param: MethodHookParam) {
@@ -230,8 +237,7 @@ class DisableHotUpdateFeature : BaseFeature() {
             runtimeKey: String
         ) {
             runCatching {
-                val cached = DexMethodCache.loadList(cache, runtimeKey, classLoader, "upgrade_response")
-                    .filter { isUpgradeResponseHandler(it) }
+                val cached = DexMethodCache.loadListCrossProcess(cache, runtimeKey, classLoader, "upgrade_response")
                 val methods = cached.ifEmpty {
                     dexKit.findMethod(
                         FindMethod().apply {
@@ -244,8 +250,10 @@ class DisableHotUpdateFeature : BaseFeature() {
                             ?.takeIf { method -> isUpgradeResponseHandler(method) }
                     }
                 }
-                if (methods.isNotEmpty()) DexMethodCache.saveList(cache, runtimeKey, "upgrade_response", methods)
-                else DexMethodCache.clear(cache, runtimeKey, "upgrade_response")
+                if (cached.isEmpty()) {
+                    if (methods.isNotEmpty()) DexMethodCache.saveList(cache, runtimeKey, "upgrade_response", methods)
+                    else DexMethodCache.clear(cache, runtimeKey, "upgrade_response")
+                }
                 methods.forEach { method ->
                     HookRegistry.get().hook(method, object : XC_MethodHook() {
                         override fun beforeHookedMethod(param: MethodHookParam) {
@@ -264,8 +272,9 @@ class DisableHotUpdateFeature : BaseFeature() {
             cache: android.content.SharedPreferences,
             runtimeKey: String
         ): Method? {
-            DexMethodCache.load(cache, runtimeKey, classLoader, "manual_updater")
-                ?.takeIf { isManualUpdaterMethod(it) }
+            // 同一运行时身份的缓存描述符已在主进程通过签名校验，push 进程直接复用，
+            // 避免因 ClassLoader 的类型对象不同而重新启动 DexKit 扫描。
+            DexMethodCache.loadCrossProcess(cache, runtimeKey, classLoader, "manual_updater")
                 ?.let { return it }
             return runCatching {
                 val method = dexKit.findMethod(

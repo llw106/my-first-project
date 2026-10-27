@@ -55,8 +55,6 @@ import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import h.Hchat.ui.miuix.EmbeddedComposeOwnerInstaller
 import h.Hchat.utils.HLog
 import java.io.ByteArrayOutputStream
@@ -79,7 +77,7 @@ import top.yukonga.miuix.kmp.theme.lightColorScheme
 
 internal object ConversationGroupQuickDialog {
     private const val TAG = "[Hchat:ConversationGroup]"
-    private val active = Collections.synchronizedMap(WeakHashMap<Activity, OverlayHandle>())
+    private val active = Collections.synchronizedMap(WeakHashMap<Activity, WeakReference<OverlayHandle>>())
     private val main = Handler(Looper.getMainLooper())
 
     fun show(activity: Activity, talker: String, onChanged: () -> Unit) {
@@ -90,7 +88,7 @@ internal object ConversationGroupQuickDialog {
             return
         }
         val target = resolveTarget(activity, normalizedTalker) ?: return
-        active.remove(activity)?.close()
+        active.remove(activity)?.get()?.close()
         lateinit var handle: OverlayHandle
         handle = showOverlay(activity) { close ->
             QuickDialogContent(
@@ -101,21 +99,25 @@ internal object ConversationGroupQuickDialog {
                 onOpenAgain = { show(activity, normalizedTalker, onChanged) }
             )
         }
-        if (handle.isShowing()) active[activity] = handle
+        if (handle.isShowing()) active[activity] = WeakReference(handle)
     }
 
     fun close(activity: Activity) {
         val action = {
-            active.remove(activity)?.close()
+            active.remove(activity)?.get()?.close()
             Unit
         }
         if (Looper.myLooper() == Looper.getMainLooper()) action() else activity.runOnUiThread(action)
     }
 
+    fun cancelPendingDocuments() {
+        ConversationGroupDocumentBridge.cancelAll()
+    }
+
     fun closeAll() {
         val action = {
             val handles = synchronized(active) {
-                active.values.toList().also { active.clear() }
+                active.values.mapNotNull { it.get() }.also { active.clear() }
             }
             handles.forEach(OverlayHandle::close)
         }
@@ -760,9 +762,11 @@ internal object ConversationGroupQuickDialog {
             val cleanup: () -> Unit = {
                 runCatching { compose.disposeComposition() }
                 runCatching { (root.parent as? ViewGroup)?.removeView(root) }
-                owner.clear(root)
-                owner.clear(decor)
-                owner.destroy()
+                root.tag = null
+                runCatching { owner.clear(root) }
+                runCatching { owner.clear(compose) }
+                runCatching { owner.clear(decor) }
+                runCatching { owner.destroy() }
                 active.remove(activity)
             }
             if (Looper.myLooper() == Looper.getMainLooper()) cleanup()
@@ -791,12 +795,14 @@ internal object ConversationGroupQuickDialog {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
-        decor.addView(root)
-        root.requestFocus()
-        return object : OverlayHandle {
+        val handle = object : OverlayHandle {
             override fun close() = closeDialog()
             override fun isShowing(): Boolean = !closed.get()
         }
+        root.tag = handle
+        decor.addView(root)
+        root.requestFocus()
+        return handle
     }
 
     @Composable
@@ -890,43 +896,35 @@ private object ConversationGroupDocumentBridge {
     private const val REQUEST_CODE_END = 0x75ff
     private val nextRequestCode = AtomicInteger(REQUEST_CODE_START)
     private val pending = ConcurrentHashMap<Int, Pending>()
-    private val hookedClasses = ConcurrentHashMap.newKeySet<Class<*>>()
-    private val destroyHookedClasses = ConcurrentHashMap.newKeySet<Class<*>>()
+    private val requests = ConcurrentHashMap<Int, ConversationGroupFileRequest<DocumentResult>>()
+    private val hooks = ConversationGroupFileResultHooks(::onResult)
 
     fun launchExport(activity: Activity, json: String, callback: (DocumentResult) -> Unit) {
         val fileName = "Hchat_chat_groups_" +
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".json"
-        launch(
-            activity,
-            Operation.Export(json),
-            Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "application/json"
-                putExtra(Intent.EXTRA_TITLE, fileName)
-                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            }.preferSystemDocumentsUi(activity),
-            callback
-        )
+        launch(activity, Operation.Export(json), Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, fileName)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }.preferSystemDocumentsUi(activity), callback)
     }
 
     fun launchImport(activity: Activity, callback: (DocumentResult) -> Unit) {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+        launch(activity, Operation.Import(ConversationGroupStore.accountKey()), Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "application/json"
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }.preferSystemDocumentsUi(activity)
-        launch(activity, Operation.Import, intent, callback) {
-            Intent.createChooser(
-                Intent(Intent.ACTION_GET_CONTENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "*/*"
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                },
-                "选择聊天分组文件"
-            )
+        }.preferSystemDocumentsUi(activity), callback) {
+            Intent.createChooser(Intent(Intent.ACTION_GET_CONTENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }, "选择聊天分组文件")
         }
     }
 
+    @Synchronized
     private fun launch(
         activity: Activity,
         operation: Operation,
@@ -934,34 +932,40 @@ private object ConversationGroupDocumentBridge {
         callback: (DocumentResult) -> Unit,
         fallback: (() -> Intent)? = null
     ) {
-        hookActivityHierarchy(activity.javaClass)
+        if (activity.isFinishing || activity.isDestroyed) return
+        if (!hooks.ensure(activity.javaClass)) {
+            cancelAll()
+            callback(DocumentResult("无法接收文件选择结果"))
+            return
+        }
         val requestCode = allocateRequestCode()
-        pending[requestCode] = Pending(WeakReference(activity), operation, callback)
-        runCatching { activity.startActivityForResult(intent, requestCode) }
-            .onFailure { firstError ->
-                val fallbackIntent = fallback?.invoke()
-                if (fallbackIntent == null) {
-                    pending.remove(requestCode)
-                    callback(DocumentResult("当前系统不支持选择文件"))
-                    HLog.e("$TAG 启动系统文档选择器失败: ${firstError.message}", firstError)
-                } else {
-                    runCatching { activity.startActivityForResult(fallbackIntent, requestCode) }
-                        .onFailure { secondError ->
-                            pending.remove(requestCode)
-                            callback(DocumentResult("当前系统不支持选择文件"))
-                            HLog.e("$TAG 启动备用文档选择器失败: ${secondError.message}", secondError)
-                        }
-                }
+        val request = ConversationGroupFileRequest.create(activity, callback) {
+            pending.remove(requestCode)
+            requests.remove(requestCode)
+        }
+        if (request == null) {
+            callback(DocumentResult("聊天分组文件任务较多，请稍后重试"))
+            return
+        }
+        requests[requestCode] = request
+        pending[requestCode] = Pending(request, operation)
+        runCatching { activity.startActivityForResult(intent, requestCode) }.onFailure { firstError ->
+            val fallbackIntent = runCatching { fallback?.invoke() }.getOrNull()
+            val secondError = if (fallbackIntent == null) firstError
+                else runCatching { activity.startActivityForResult(fallbackIntent, requestCode) }.exceptionOrNull()
+            if (secondError != null) {
+                pending.remove(requestCode)
+                request.deliver(DocumentResult("当前系统不支持选择文件"))
+                HLog.e("$TAG 启动文档选择器失败: ${secondError.message}", secondError)
             }
+        }
     }
 
-    private fun hookActivityHierarchy(activityClass: Class<*>) {
-        var current: Class<*>? = activityClass
-        while (current != null && Activity::class.java.isAssignableFrom(current)) {
-            hookActivityResult(current)
-            hookActivityDestroy(current)
-            current = current.superclass
-        }
+    @Synchronized
+    fun cancelAll() {
+        requests.values.toList().forEach { it.cancel() }
+        pending.clear()
+        hooks.clear()
     }
 
     private fun allocateRequestCode(): Int {
@@ -969,71 +973,64 @@ private object ConversationGroupDocumentBridge {
             val candidate = nextRequestCode.updateAndGet { current ->
                 if (current >= REQUEST_CODE_END) REQUEST_CODE_START else current + 1
             }
-            if (!pending.containsKey(candidate)) return candidate
+            if (!requests.containsKey(candidate)) return candidate
         }
-        val oldest = pending.keys.minOrNull() ?: REQUEST_CODE_START
-        pending.remove(oldest)?.deliver(DocumentResult(""))
-        return oldest
+        error("文件选择请求已满")
     }
 
-    private fun hookActivityResult(clazz: Class<*>) {
-        if (!hookedClasses.add(clazz)) return
-        runCatching {
-            XposedBridge.hookAllMethods(clazz, "onActivityResult", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    val requestCode = param.args.getOrNull(0) as? Int ?: return
-                    val request = pending[requestCode] ?: return
-                    val activity = request.activity.get()
-                    if (activity == null) {
-                        pending.remove(requestCode, request)
-                        return
-                    }
-                    if (param.thisObject !== activity || !pending.remove(requestCode, request)) return
-                    val resultCode = param.args.getOrNull(1) as? Int ?: Activity.RESULT_CANCELED
-                    val data = param.args.getOrNull(2) as? Intent
-                    val uri = data?.data
-                    if (resultCode != Activity.RESULT_OK || uri == null) {
-                        request.deliver(DocumentResult(""))
-                        return
-                    }
-                    Thread({ process(activity, request, uri) }, "Hchat-ConversationGroupDocument").start()
-                }
-            })
-        }.onFailure { hookedClasses.remove(clazz) }
-    }
-
-    private fun process(activity: Activity, request: Pending, uri: android.net.Uri) {
-        val result = runCatching {
-            when (val operation = request.operation) {
-                is Operation.Export -> {
-                    activity.contentResolver.openOutputStream(uri, "wt")?.use { output ->
-                        output.write(operation.json.toByteArray(Charsets.UTF_8))
-                    } ?: error("无法写入所选文件")
-                    DocumentResult("聊天分组已导出")
-                }
-                Operation.Import -> {
-                    val json = readText(activity, uri)
-                    val imported = ConversationGroupStore.importCurrentAccount(activity, json)
-                    DocumentResult(
-                        message = imported.message,
-                        changed = imported.success
-                    )
-                }
+    private fun onResult(activity: Activity, code: Int, resultCode: Int, data: Intent?) {
+        val value = pending[code] ?: return
+        val request = value.request
+        if (request.activity.get() !== activity || !pending.remove(code, value)) return
+        val uri = data?.data
+        if (resultCode != Activity.RESULT_OK || uri == null) {
+            request.deliver(DocumentResult(""))
+            return
+        }
+        val context = activity.applicationContext
+        val operation = value.operation
+        request.execute(
+            task = { canceled -> process(context, operation, uri, canceled) },
+            failure = { error ->
+                HLog.e("$TAG 处理聊天分组文件失败: ${error.message}", error)
+                DocumentResult(error.message ?: "处理聊天分组文件失败")
             }
-        }.getOrElse {
-            HLog.e("$TAG 处理聊天分组文件失败: ${it.message}", it)
-            DocumentResult(it.message ?: "处理聊天分组文件失败")
-        }
-        request.deliver(result)
+        )
     }
 
-    private fun readText(activity: Activity, uri: android.net.Uri): String {
-        return activity.contentResolver.openInputStream(uri)?.use { input ->
+    private fun process(context: Context, operation: Operation, uri: android.net.Uri, canceled: AtomicBoolean): DocumentResult {
+        checkActive(canceled)
+        return when (operation) {
+            is Operation.Export -> {
+                context.contentResolver.openOutputStream(uri, "wt")?.use { output ->
+                    checkActive(canceled)
+                    output.write(operation.json.toByteArray(Charsets.UTF_8))
+                } ?: error("无法写入所选文件")
+                checkActive(canceled)
+                DocumentResult("聊天分组已导出")
+            }
+            is Operation.Import -> {
+                val json = readText(context, uri, canceled)
+                checkActive(canceled)
+                val imported = ConversationGroupStore.importCurrentAccount(context, json, operation.account) { canceled.get() }
+                DocumentResult(imported.message, imported.success)
+            }
+        }
+    }
+
+    private fun checkActive(canceled: AtomicBoolean) {
+        if (canceled.get()) throw java.util.concurrent.CancellationException()
+    }
+
+    private fun readText(context: Context, uri: android.net.Uri, canceled: AtomicBoolean): String {
+        return context.contentResolver.openInputStream(uri)?.use { input ->
             val output = ByteArrayOutputStream()
             val buffer = ByteArray(16 * 1024)
             var total = 0
             while (true) {
+                checkActive(canceled)
                 val count = input.read(buffer)
+                checkActive(canceled)
                 if (count < 0) break
                 total += count
                 require(total <= MAX_IMPORT_BYTES) { "聊天分组文件不能超过 8 MB" }
@@ -1043,27 +1040,10 @@ private object ConversationGroupDocumentBridge {
         } ?: error("无法读取所选文件")
     }
 
-    private fun hookActivityDestroy(clazz: Class<*>) {
-        if (!destroyHookedClasses.add(clazz)) return
-        runCatching {
-            XposedBridge.hookAllMethods(clazz, "onDestroy", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    val activity = param.thisObject as? Activity ?: return
-                    pending.entries.forEach { entry ->
-                        val owner = entry.value.activity.get()
-                        if (owner == null || owner === activity) pending.remove(entry.key, entry.value)
-                    }
-                }
-            })
-        }.onFailure { destroyHookedClasses.remove(clazz) }
-    }
-
     private fun Intent.preferSystemDocumentsUi(context: Context): Intent {
         for (packageName in listOf("com.google.android.documentsui", "com.android.documentsui")) {
             val copy = Intent(this).setPackage(packageName)
-            if (runCatching { context.packageManager.queryIntentActivities(copy, 0) }
-                    .getOrDefault(emptyList()).isNotEmpty()
-            ) {
+            if (runCatching { context.packageManager.queryIntentActivities(copy, 0) }.getOrDefault(emptyList()).isNotEmpty()) {
                 setPackage(packageName)
                 break
             }
@@ -1071,22 +1051,10 @@ private object ConversationGroupDocumentBridge {
         return this
     }
 
-    private data class Pending(
-        val activity: WeakReference<Activity>,
-        val operation: Operation,
-        val callback: (DocumentResult) -> Unit
-    ) {
-        fun deliver(result: DocumentResult) {
-            val owner = activity.get() ?: return
-            owner.runOnUiThread {
-                if (!owner.isFinishing && !owner.isDestroyed) callback(result)
-            }
-        }
-    }
-
+    private data class Pending(val request: ConversationGroupFileRequest<DocumentResult>, val operation: Operation)
     private sealed class Operation {
         data class Export(val json: String) : Operation()
-        object Import : Operation()
+        data class Import(val account: String) : Operation()
     }
 }
 

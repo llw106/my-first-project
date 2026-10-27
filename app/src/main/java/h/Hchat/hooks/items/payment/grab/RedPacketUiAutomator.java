@@ -14,6 +14,7 @@ import android.widget.TextView;
 
 import h.Hchat.hooks.core.HookRegistry;
 import h.Hchat.hooks.items.payment.core.RedPacketSettings;
+import h.Hchat.hooks.items.payment.core.RedPacketState;
 import h.Hchat.hooks.items.payment.detect.RedPacketParser;
 import h.Hchat.utils.KavaReflector;
 
@@ -49,6 +50,7 @@ public class RedPacketUiAutomator {
 
     private final ClassLoader classLoader;
     private final RedPacketSettings settings;
+    private final RedPacketState state;
     private final FilterCallback filterCallback;
     private final SuccessCallback successCallback;
     private final FailureCallback failureCallback;
@@ -60,6 +62,7 @@ public class RedPacketUiAutomator {
     public RedPacketUiAutomator(
             ClassLoader classLoader,
             RedPacketSettings settings,
+            RedPacketState state,
             FilterCallback filterCallback,
             SuccessCallback successCallback,
             FailureCallback failureCallback,
@@ -67,6 +70,7 @@ public class RedPacketUiAutomator {
     ) {
         this.classLoader = classLoader;
         this.settings = settings;
+        this.state = state;
         this.filterCallback = filterCallback;
         this.successCallback = successCallback;
         this.failureCallback = failureCallback;
@@ -78,6 +82,16 @@ public class RedPacketUiAutomator {
         hookReceiveActivities();
         hookDetailActivities();
         hooked = true;
+    }
+
+    public static Intent createReceiveIntent(String content, String talker, String nativeUrl, String sender) {
+        Intent intent = new Intent();
+        intent.putExtra("key_native_url", nativeUrl);
+        intent.putExtra("key_username", talker);
+        intent.putExtra("scene_id", RedPacketParser.getLuckyMoneySceneId(content, talker, nativeUrl));
+        intent.putExtra("key_way", 0);
+        if (!TextUtils.isEmpty(sender)) intent.putExtra("key_from_username", sender);
+        return intent;
     }
 
     private void hookReceiveActivities() {
@@ -152,11 +166,10 @@ public class RedPacketUiAutomator {
 
     private void handleReceivePage(Object thisObject, String source, boolean click) {
         if (!(thisObject instanceof Activity)) return;
-        if (!settings.isEnabled() || settings.getInt(RedPacketSettings.KEY_GRAB_MODE, RedPacketSettings.DEFAULT_GRAB_MODE) == 1) return;
         Activity activity = (Activity) thisObject;
         String nativeUrl = getNativeUrl(activity);
+        if (!canAutomate(nativeUrl)) return;
         log("领取页" + source + ": nativeurl=" + nativeUrl);
-        if (shouldSkip(nativeUrl)) return;
         if (click && !isActivityClicked(activity)) {
             tryClickButton(activity, thisObject);
         }
@@ -224,7 +237,7 @@ public class RedPacketUiAutomator {
         Runnable runnable = new Runnable() {
             @Override
             public void run() {
-                if (activity.isFinishing() || activity.isDestroyed()) return;
+                if (activity.isFinishing() || activity.isDestroyed() || !canAutomate(nativeUrl)) return;
                 boolean closed = checkAndCloseIfFailed(activity, nativeUrl);
                 if (!closed && count[0]++ < maxChecks) handler.postDelayed(this, 300);
             }
@@ -233,8 +246,8 @@ public class RedPacketUiAutomator {
     }
 
     private void scheduleDetailSuccessCheck(Activity activity) {
-        if (!settings.isEnabled()) return;
         String nativeUrl = getNativeUrl(activity);
+        if (!canAutomate(nativeUrl)) return;
         boolean selfSent = false;
         try {
             Intent intent = activity.getIntent();
@@ -247,7 +260,7 @@ public class RedPacketUiAutomator {
         Runnable runnable = new Runnable() {
             @Override
             public void run() {
-                if (activity.isFinishing() || activity.isDestroyed()) return;
+                if (activity.isFinishing() || activity.isDestroyed() || !canAutomate(nativeUrl)) return;
                 boolean success = checkAndCloseIfSuccess(activity, nativeUrl, finalSelfSent);
                 if (!success && count[0]++ < maxChecks) handler.postDelayed(this, 300);
             }
@@ -260,6 +273,7 @@ public class RedPacketUiAutomator {
             View root = activity.getWindow().getDecorView();
             if (checkSuccessStatus(root)) return false;
             if (checkFailedStatus(root)) {
+                if (!state.finishUiPacket(nativeUrl)) return true;
                 log("检测到红包失败状态，关闭页面");
                 if (failureCallback != null) failureCallback.onFailure(nativeUrl, "手慢了或红包已领完");
                 clickedActivities.remove(activity);
@@ -277,6 +291,7 @@ public class RedPacketUiAutomator {
             View root = activity.getWindow().getDecorView();
             if (!checkSuccessStatus(root)) return false;
             String amount = extractAmountFromView(root);
+            if (!state.finishUiPacket(nativeUrl)) return true;
             log("检测到红包领取成功: amount=" + amount);
             if (successCallback != null) successCallback.onSuccess(nativeUrl, amount, selfSent);
             if (settings.getBoolean(RedPacketSettings.KEY_AUTO_CLOSE, false)) activity.finish();
@@ -295,7 +310,7 @@ public class RedPacketUiAutomator {
             try {
                 Object value = KavaReflector.readField(thisObject, fieldName);
                 if (value instanceof Button && !isViewClicked((View) value)) {
-                    clickButton((Button) value);
+                    clickButton(activity, (Button) value);
                     markViewClicked((View) value);
                     markActivityClicked(activity);
                     log("通过字段点击红包按钮: " + fieldName);
@@ -311,7 +326,7 @@ public class RedPacketUiAutomator {
                 Button button = (Button) value;
                 if (isViewClicked(button)) continue;
                 if (isOpenButtonText(getViewText(button), true)) {
-                    clickButton(button);
+                    clickButton(activity, button);
                     markViewClicked(button);
                     markActivityClicked(activity);
                     log("遍历字段点击红包按钮: " + field.getName());
@@ -320,19 +335,19 @@ public class RedPacketUiAutomator {
             }
         } catch (Throwable ignored) {}
 
-        if (findAndClickButton(activity.getWindow().getDecorView())) {
+        if (findAndClickButton(activity, activity.getWindow().getDecorView())) {
             markActivityClicked(activity);
         }
     }
 
-    private boolean findAndClickButton(View view) {
+    private boolean findAndClickButton(Activity activity, View view) {
         if (view == null || isViewClicked(view)) return false;
         if (view instanceof Button) {
             Button button = (Button) view;
             CharSequence desc = view.getContentDescription();
             if (isOpenButtonText(getViewText(button), false)
                     || (desc != null && desc.toString().contains("開"))) {
-                clickButton(button);
+                clickButton(activity, button);
                 markViewClicked(button);
                 return true;
             }
@@ -340,7 +355,7 @@ public class RedPacketUiAutomator {
         if (view.isClickable() && view instanceof TextView) {
             TextView tv = (TextView) view;
             if (isOpenButtonText(getViewText(tv), false)) {
-                clickView(view);
+                clickView(activity, view);
                 markViewClicked(view);
                 return true;
             }
@@ -348,7 +363,7 @@ public class RedPacketUiAutomator {
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) {
-                if (findAndClickButton(group.getChildAt(i))) return true;
+                if (findAndClickButton(activity, group.getChildAt(i))) return true;
             }
         }
         return false;
@@ -445,16 +460,20 @@ public class RedPacketUiAutomator {
         return null;
     }
 
-    private void clickButton(Button button) {
-        clickView(button);
+    private void clickButton(Activity activity, Button button) {
+        clickView(activity, button);
     }
 
-    private void clickView(View view) {
+    private void clickView(Activity activity, View view) {
         view.setEnabled(true);
         view.post(() -> view.getViewTreeObserver().addOnGlobalLayoutListener(
                 new ViewTreeObserver.OnGlobalLayoutListener() {
                     @Override
                     public void onGlobalLayout() {
+                        if (activity.isFinishing() || activity.isDestroyed() || !canAutomate(getNativeUrl(activity))) {
+                            view.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                            return;
+                        }
                         if (view.isEnabled() && view.getVisibility() == View.VISIBLE) {
                             try {
                                 view.performClick();
@@ -466,6 +485,10 @@ public class RedPacketUiAutomator {
                         }
                     }
                 }));
+    }
+
+    private boolean canAutomate(String nativeUrl) {
+        return settings.isEnabled() && state.isUiPending(nativeUrl) && !shouldSkip(nativeUrl);
     }
 
     private boolean shouldSkip(String nativeUrl) {

@@ -1,9 +1,12 @@
 package h.Hchat.hooks.items.script.agent
 
+import h.Hchat.utils.HchatHttp
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
@@ -14,13 +17,9 @@ class ScriptPluginAgentMcpClient(
     private val authorization: String,
     private val cancellation: ScriptPluginAgentCancellation? = null
 ) {
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
     private val requestId = AtomicLong(0L)
     private var sessionId: String = ""
+    private var protocolVersion = REQUESTED_PROTOCOL_VERSION
     private var initialized = false
     private var serverInstructions: String = ""
 
@@ -29,13 +28,20 @@ class ScriptPluginAgentMcpClient(
         val tools = JSONArray()
         val visitedCursors = HashSet<String>()
         var cursor = ""
+        var pageCount = 0
+        var catalogBytes = 0L
         do {
-            if (cursor.isNotBlank() && !visitedCursors.add(cursor)) break
+            cancellation?.throwIfCancelled()
+            check(++pageCount <= MAX_TOOL_PAGES) { "MCP 工具目录超过 $MAX_TOOL_PAGES 页" }
+            check(cursor.isBlank() || visitedCursors.add(cursor)) { "MCP 工具目录返回循环 cursor" }
             val params = JSONObject().apply {
                 if (cursor.isNotBlank()) put("cursor", cursor)
             }
             val result = request("tools/list", params)
-            val page = result.optJSONArray("tools") ?: JSONArray()
+            val page = result.optJSONArray("tools") ?: error("MCP tools/list 缺少 tools 数组")
+            catalogBytes += page.toString().toByteArray(Charsets.UTF_8).size
+            check(catalogBytes <= ScriptPluginAgentMcpResponse.MAX_RESPONSE_BYTES) { "MCP 工具目录超过大小限制" }
+            check(tools.length() + page.length() <= MAX_TOOLS) { "MCP 工具目录超过 $MAX_TOOLS 个工具" }
             for (index in 0 until page.length()) tools.put(page.opt(index))
             cursor = result.optString("nextCursor", "").trim()
         } while (cursor.isNotBlank())
@@ -60,10 +66,12 @@ class ScriptPluginAgentMcpClient(
 
     private fun initialize() {
         if (initialized) return
+        sessionId = ""
+        protocolVersion = REQUESTED_PROTOCOL_VERSION
         val result = request(
             "initialize",
             JSONObject().apply {
-                put("protocolVersion", "2024-11-05")
+                put("protocolVersion", REQUESTED_PROTOCOL_VERSION)
                 put("capabilities", JSONObject())
                 put("clientInfo", JSONObject().apply {
                     put("name", "Hchat Plugin Agent")
@@ -71,9 +79,11 @@ class ScriptPluginAgentMcpClient(
                 })
             }
         )
-        if (result.optString("protocolVersion").isBlank()) {
-            throw IllegalStateException("MCP initialize 返回无效")
+        val negotiatedVersion = result.optString("protocolVersion", "").trim()
+        check(negotiatedVersion in SUPPORTED_PROTOCOL_VERSIONS) {
+            "MCP 服务器返回不支持的协议版本: ${negotiatedVersion.ifBlank { "空" }}"
         }
+        protocolVersion = negotiatedVersion
         serverInstructions = result.optString("instructions", "").trim().take(4_000)
         notify("notifications/initialized", JSONObject())
         initialized = true
@@ -87,7 +97,7 @@ class ScriptPluginAgentMcpClient(
             put("method", method)
             put("params", params)
         }
-        return parseResponse(post(payload, expectResponse = true), id).also { response ->
+        return requireNotNull(post(payload, expectedId = id)).also { response ->
             response.optJSONObject("error")?.let { error ->
                 throw IllegalStateException("MCP $method 失败: ${error.optString("message", error.toString())}")
             }
@@ -100,21 +110,28 @@ class ScriptPluginAgentMcpClient(
             put("method", method)
             put("params", params)
         }
-        post(payload, expectResponse = false)
+        post(payload, expectedId = null)
     }
 
-    private fun post(payload: JSONObject, expectResponse: Boolean): String {
+    private fun post(payload: JSONObject, expectedId: Long?): JSONObject? {
         cancellation?.throwIfCancelled()
+        val body = payload.toString().toRequestBody("application/json".toMediaType())
         val request = Request.Builder()
             .url(endpoint)
             .header("Accept", "application/json, text/event-stream")
             .header("Content-Type", "application/json")
-            .header("MCP-Protocol-Version", "2024-11-05")
             .apply {
+                if (payload.optString("method") != "initialize") header("MCP-Protocol-Version", protocolVersion)
                 if (sessionId.isNotBlank()) header("Mcp-Session-Id", sessionId)
                 if (authorization.isNotBlank()) header("Authorization", authorization)
             }
-            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .post(object : RequestBody() {
+                override fun contentType() = body.contentType()
+                override fun contentLength() = body.contentLength()
+                override fun writeTo(sink: BufferedSink) = body.writeTo(sink)
+                // A failed POST may already have executed a tool. Do not replay its body.
+                override fun isOneShot() = true
+            })
             .build()
         val call = httpClient.newCall(request)
         cancellation?.bind(call)
@@ -125,8 +142,13 @@ class ScriptPluginAgentMcpClient(
                     sessionId = response.header("Mcp-Session-Id").orEmpty()
                 }
                 if (!response.isSuccessful) throw IllegalStateException("MCP HTTP ${response.code}")
-                if (!expectResponse) return@use ""
-                response.body?.string().orEmpty().ifBlank { throw IllegalStateException("MCP 返回为空") }
+                if (expectedId == null) return@use null
+                val responseBody = response.body ?: error("MCP 返回为空")
+                ScriptPluginAgentMcpResponse.read(
+                    responseBody.byteStream(),
+                    response.header("Content-Type").orEmpty(),
+                    expectedId
+                ) { cancellation?.throwIfCancelled() }
             }
         } catch (error: Throwable) {
             if (cancellation?.isCancellation(error) == true) {
@@ -138,19 +160,18 @@ class ScriptPluginAgentMcpClient(
         }
     }
 
-    private fun parseResponse(raw: String, expectedId: Long): JSONObject {
-        val trimmed = raw.trim()
-        if (trimmed.startsWith("{")) {
-            return JSONObject(trimmed).takeIf { it.optLong("id", Long.MIN_VALUE) == expectedId }
-                ?: throw IllegalStateException("MCP 返回的请求 ID 不匹配")
-        }
-        val responses = trimmed.lineSequence()
-            .map { it.trim() }
-            .filter { it.startsWith("data:") }
-            .map { it.removePrefix("data:").trim() }
-            .filter { it.startsWith("{") }
-            .mapNotNull { runCatching { JSONObject(it) }.getOrNull() }
-        return responses.firstOrNull { it.optLong("id", Long.MIN_VALUE) == expectedId }
-            ?: throw IllegalStateException("MCP SSE 中没有匹配的请求响应")
+    private companion object {
+        const val REQUESTED_PROTOCOL_VERSION = "2025-06-18"
+        // Retain existing JSON-RPC compatibility; legacy HTTP+SSE's separate GET endpoint is not implemented.
+        val SUPPORTED_PROTOCOL_VERSIONS = setOf("2024-11-05", "2025-03-26", REQUESTED_PROTOCOL_VERSION)
+        const val MAX_TOOL_PAGES = 100
+        const val MAX_TOOLS = 2_000
+        val httpClient = HchatHttp.shared.newBuilder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(90, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(false)
+            .build()
     }
 }

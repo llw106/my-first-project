@@ -29,7 +29,9 @@ class WeChatTaskApi(
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val executor = Executors.newCachedThreadPool()
+    // 原来是 newCachedThreadPool()：并发高峰会无限开线程（每线程默认 1MB 栈），
+    // 空闲 60 秒才回收。这里都是短任务，固定小池足够，且不会随负载膨胀。
+    private val executor = Executors.newFixedThreadPool(TASK_THREADS)
     private val delayedTasks = ConcurrentHashMap<String, Runnable>()
     private val exactTasks = ConcurrentHashMap<String, ExactTask>()
     private val lastRunTimes = ConcurrentHashMap<String, Long>()
@@ -116,12 +118,28 @@ class WeChatTaskApi(
     fun runThrottled(key: String?, intervalMs: Long, runnable: Runnable?): Boolean {
         if (TextUtils.isEmpty(key) || runnable == null) return false
         val now = System.currentTimeMillis()
+        pruneRunState(now)
         val safeKey = key ?: ""
         val old = lastRunTimes[safeKey]
         if (old != null && now - old < intervalMs.coerceAtLeast(0L)) return false
         lastRunTimes[safeKey] = now
         safeRun(runnable)
         return true
+    }
+
+    /**
+     * 节流表是纯缓存：过期项和超量项都可以安全丢弃。
+     * 以前没人清理，长跑一次会话就会堆到几万条 key。
+     */
+    private fun pruneRunState(now: Long) {
+        if (lastRunTimes.size <= MAX_RUN_STATE) return
+        lastRunTimes.entries.removeAll { now - it.value > RUN_STATE_TTL_MS }
+        if (lastRunTimes.size > MAX_RUN_STATE) {
+            lastRunTimes.entries
+                .sortedBy { it.value }
+                .take(lastRunTimes.size - MAX_RUN_STATE)
+                .forEach { lastRunTimes.remove(it.key, it.value) }
+        }
     }
 
     fun cancel(key: String?) {
@@ -243,6 +261,12 @@ class WeChatTaskApi(
     )
 
     private companion object {
+        // 固定 4 线程：模块里的异步任务都是短平快的 hook / 反射调用，
+        // 原 newCachedThreadPool 在消息洪水时会瞬间拉出几十个线程。
+        const val TASK_THREADS = 4
+        // 节流表的容量与过期时间，超出后按最旧优先淘汰。
+        const val MAX_RUN_STATE = 512
+        const val RUN_STATE_TTL_MS = 10 * 60 * 1000L
         const val ACTION_EXACT_TASK = "h.Hchat.action.EXACT_TASK"
         const val EXTRA_EXACT_TASK_KEY = "h.Hchat.extra.EXACT_TASK_KEY"
         const val EXTRA_EXACT_TASK_TOKEN = "h.Hchat.extra.EXACT_TASK_TOKEN"

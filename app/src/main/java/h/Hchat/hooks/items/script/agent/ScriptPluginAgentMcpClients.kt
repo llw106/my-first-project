@@ -5,7 +5,7 @@ import org.json.JSONObject
 
 internal class ScriptPluginAgentMcpClients(
     servers: List<ScriptPluginAgentMcpServer>,
-    cancellation: ScriptPluginAgentCancellation
+    private val cancellation: ScriptPluginAgentCancellation
 ) {
     private val entries = servers.filter { it.enabled }
         .map { server ->
@@ -26,8 +26,8 @@ internal class ScriptPluginAgentMcpClients(
         routes.clear()
         val tools = JSONArray()
         val serverViews = JSONArray()
-        val failures = ArrayList<String>()
         entries.forEach { entry ->
+            cancellation.throwIfCancelled()
             val view = JSONObject().apply {
                 put("id", entry.server.id)
                 put("name", entry.server.name)
@@ -64,15 +64,12 @@ internal class ScriptPluginAgentMcpClients(
                     view.put("toolCount", listedTools.length())
                 }
                 .onFailure {
+                    if (cancellation.isCancellation(it)) throw it
                     val message = it.message ?: it.javaClass.simpleName
-                    failures += "${entry.server.name}: $message"
                     view.put("error", message)
                     view.put("toolCount", 0)
                 }
             serverViews.put(view)
-        }
-        if (failures.size == entries.size && entries.isNotEmpty()) {
-            throw IllegalStateException("MCP 连接失败: ${failures.joinToString("；")}")
         }
         return JSONObject().apply {
             put("servers", serverViews)

@@ -1,5 +1,7 @@
 package h.Hchat.hooks.items.script.agent
 
+import bsh.ScriptSyntaxValidator
+import h.Hchat.utils.HLog
 import java.io.StringReader
 import java.util.Properties
 
@@ -43,10 +45,13 @@ object ScriptPluginAgentValidator {
         return result
     }
 
-    fun validate(draft: ScriptPluginAgentDraft): ScriptPluginAgentValidation {
+    fun validate(
+        draft: ScriptPluginAgentDraft,
+        mainSource: String = draft.mainJava
+    ): ScriptPluginAgentValidation {
         val issues = ArrayList<ScriptPluginAgentIssue>()
         val id = draft.pluginId.trim()
-        val code = draft.mainJava
+        val code = mainSource
         val info = parseInfo(draft.infoProp)
         if (id.isBlank() || id == "." || id == "..") {
             issues += ScriptPluginAgentIssue(ScriptPluginAgentIssueLevel.ERROR, "插件目录名不能为空")
@@ -76,18 +81,7 @@ object ScriptPluginAgentValidator {
                 "info.prop 的 process 只支持 main、appbrand 或 all"
             )
         }
-        if (code.contains("```")) {
-            issues += ScriptPluginAgentIssue(ScriptPluginAgentIssueLevel.ERROR, "main.java 仍包含 Markdown 代码围栏")
-        }
-        if (!balanced(code, '{', '}')) {
-            issues += ScriptPluginAgentIssue(ScriptPluginAgentIssueLevel.ERROR, "main.java 的大括号不平衡")
-        }
-        if (containsTopLevelNativeDeclaration(code)) {
-            issues += ScriptPluginAgentIssue(
-                ScriptPluginAgentIssueLevel.ERROR,
-                "BeanShell 顶层 native 方法无法绑定 JNI，请把 native 声明放进类并将该类的 ClassLoader 传给 loadSo"
-            )
-        }
+        if (code.isNotBlank()) syntaxIssue("main.java", code)?.let { issues += it }
         if (unsafeFilePath.containsMatchIn(code)) {
             issues += ScriptPluginAgentIssue(
                 ScriptPluginAgentIssueLevel.ERROR,
@@ -113,19 +107,13 @@ object ScriptPluginAgentValidator {
 
     fun validateAdditionalCode(path: String, code: String): List<ScriptPluginAgentIssue> {
         val issues = ArrayList<ScriptPluginAgentIssue>()
-        if (code.contains("```")) {
-            issues += ScriptPluginAgentIssue(ScriptPluginAgentIssueLevel.ERROR, "$path 仍包含 Markdown 代码围栏")
+        if (path.substringAfterLast('.', "").lowercase() in setOf("java", "bsh")) {
+            syntaxIssue(path, code)?.let { issues += it }
         }
         if (unsafeFilePath.containsMatchIn(code)) {
             issues += ScriptPluginAgentIssue(
                 ScriptPluginAgentIssueLevel.ERROR,
                 "$path 包含绝对路径或 .. 路径，请改用 pluginDir、pluginDirFile 或 cacheDir"
-            )
-        }
-        if (containsTopLevelNativeDeclaration(code)) {
-            issues += ScriptPluginAgentIssue(
-                ScriptPluginAgentIssueLevel.ERROR,
-                "$path: BeanShell 顶层 native 方法无法绑定 JNI，请把 native 声明放进类并将该类的 ClassLoader 传给 loadSo"
             )
         }
         issues += riskIssues(code).map { issue -> issue.copy(message = "$path: ${issue.message}") }
@@ -157,108 +145,42 @@ object ScriptPluginAgentValidator {
         }
     }
 
-    private fun balanced(code: String, open: Char, close: Char): Boolean {
-        var depth = 0
-        var quote: Char? = null
-        var escaped = false
-        var lineComment = false
-        var blockComment = false
-        var index = 0
-        while (index < code.length) {
-            val current = code[index]
-            val next = code.getOrNull(index + 1)
-            if (lineComment) {
-                if (current == '\n') lineComment = false
-                index++
-                continue
-            }
-            if (blockComment) {
-                if (current == '*' && next == '/') {
-                    blockComment = false
-                    index += 2
-                } else index++
-                continue
-            }
-            if (quote != null) {
-                if (escaped) escaped = false
-                else if (current == '\\') escaped = true
-                else if (current == quote) quote = null
-                index++
-                continue
-            }
-            if (current == '/' && next == '/') {
-                lineComment = true
-                index += 2
-                continue
-            }
-            if (current == '/' && next == '*') {
-                blockComment = true
-                index += 2
-                continue
-            }
-            if (current == '\"' || current == '\'') quote = current
-            else if (current == open) depth++
-            else if (current == close && --depth < 0) return false
-            index++
+    private fun syntaxIssue(path: String, code: String): ScriptPluginAgentIssue? {
+        val result = try {
+            ScriptSyntaxValidator.validate(code)
+        } catch (error: Exception) {
+            HLog.e("[Hchat:ScriptAgent] BeanShell 语法检查失败: $path", error)
+            return ScriptPluginAgentIssue(
+                ScriptPluginAgentIssueLevel.ERROR,
+                "$path 无法完成 BeanShell 语法检查：${error.javaClass.simpleName}"
+            )
+        } catch (error: StackOverflowError) {
+            HLog.e("[Hchat:ScriptAgent] BeanShell 语法嵌套过深: $path", error)
+            return ScriptPluginAgentIssue(ScriptPluginAgentIssueLevel.ERROR, "$path 语法嵌套过深，无法完成检查")
         }
-        return quote == null && !blockComment && depth == 0
-    }
-
-    private fun containsTopLevelNativeDeclaration(code: String): Boolean {
-        var depth = 0
-        var quote: Char? = null
-        var escaped = false
-        var lineComment = false
-        var blockComment = false
-        var index = 0
-        while (index < code.length) {
-            val current = code[index]
-            val next = code.getOrNull(index + 1)
-            if (lineComment) {
-                if (current == '\n') lineComment = false
-                index++
-                continue
-            }
-            if (blockComment) {
-                if (current == '*' && next == '/') {
-                    blockComment = false
-                    index += 2
-                } else index++
-                continue
-            }
-            if (quote != null) {
-                if (escaped) escaped = false
-                else if (current == '\\') escaped = true
-                else if (current == quote) quote = null
-                index++
-                continue
-            }
-            if (current == '/' && next == '/') {
-                lineComment = true
-                index += 2
-                continue
-            }
-            if (current == '/' && next == '*') {
-                blockComment = true
-                index += 2
-                continue
-            }
-            if (current == '\"' || current == '\'') {
-                quote = current
-                index++
-                continue
-            }
-            if (current == '{') depth++
-            else if (current == '}') depth--
-            else if (depth == 0 && code.regionMatches(index, "native", 0, 6)) {
-                val before = code.getOrNull(index - 1)
-                val after = code.getOrNull(index + 6)
-                val beforeIsIdentifier = before?.let { Character.isJavaIdentifierPart(it) } == true
-                val afterIsIdentifier = after?.let { Character.isJavaIdentifierPart(it) } == true
-                if (!beforeIsIdentifier && !afterIsIdentifier) return true
-            }
-            index++
+        val error = result.error ?: return null
+        val originalLines = code.lines()
+        val parsedLine = result.parsedSource.lines().getOrNull(result.line - 1)
+        // Preprocessors do not supply a source map. Only report an original location when confirmed;
+        // otherwise label the parser's actual location and excerpt instead of inventing a source line.
+        val sourceLine = when {
+            result.line <= 0 -> null
+            result.originalLineNumbers -> result.line
+            !parsedLine.isNullOrBlank() -> originalLines.indices.filter { originalLines[it] == parsedLine }
+                .singleOrNull()?.plus(1)
+            else -> null
         }
-        return false
+        val location = when {
+            sourceLine != null && parsedLine == originalLines.getOrNull(sourceLine - 1) && result.column > 0 ->
+                "$path:$sourceLine:${result.column}"
+            sourceLine != null -> "$path:$sourceLine"
+            result.line > 0 -> "$path（预处理后第 ${result.line} 行，第 ${result.column} 列）"
+            else -> path
+        }
+        val excerpt = parsedLine?.trim()?.take(180).orEmpty()
+        return ScriptPluginAgentIssue(
+            ScriptPluginAgentIssueLevel.ERROR,
+            "$location: ${error.take(320)}" + if (excerpt.isBlank()) "" else "\n解析片段：$excerpt"
+        )
     }
 }

@@ -35,6 +35,7 @@ object ScriptPluginAgentWorkspaceTools {
 
     private val toolNames = setOf(
         "check_access",
+        "runtime_diagnostics",
         "list_files",
         "read_file",
         "search_files",
@@ -43,6 +44,7 @@ object ScriptPluginAgentWorkspaceTools {
         "apply_patch",
         "replace_text",
         "run_shell",
+        "run_command",
         "move_path",
         "delete_path",
         "restore_path",
@@ -60,6 +62,11 @@ object ScriptPluginAgentWorkspaceTools {
             "path" to stringSchema("相对插件目录的路径，默认 .", minLength = 0),
             "recursive" to booleanSchema("是否递归检查子文件和目录", true),
             "repair" to booleanSchema("是否尝试补齐当前文件所有者的读写权限和目录进入权限", false)
+        ), listOf("plugin_id"))
+        tool(tools, "runtime_diagnostics", "只读指定已安装插件的当前进程加载状态与 log.txt；不创建工作区，不执行或启用插件。日志属于磁盘插件的历史输出，不能验证暂存新代码", linkedMapOf(
+            "plugin_id" to stringSchema("插件目录的准确 ID，不接受显示名或模糊匹配"),
+            "max_lines" to integerSchema("最多返回最新日志行数，单页同时限制为 64 KiB", 120, 1, 500),
+            "before_offset" to integerSchema("向前读取日志的字节边界；-1 从末尾读取，续读使用上次 nextBeforeOffset", -1, -1)
         ), listOf("plugin_id"))
         tool(tools, "list_files", "列出插件工作区内的文件和目录", linkedMapOf(
             "plugin_id" to stringSchema("插件目录名；修改现有插件时使用插件列表中的准确 ID"),
@@ -114,6 +121,11 @@ object ScriptPluginAgentWorkspaceTools {
             "command" to stringSchema("要执行的 shell 命令；只能操作插件目录内的文件，禁止访问系统/网络/其它应用数据"),
             "timeout_seconds" to integerSchema("命令超时秒数", 15, 1, 60)
         ), listOf("plugin_id", "command"))
+        tool(tools, "run_command", "在完整 Ubuntu 终端环境（proot 容器，容器内 root）执行命令。支持 apt 装包、编译运行代码、curl 等；比 run_shell 强大。首次调用会触发环境下载安装（约 279MB，需联网，已内置 codex 与 DexClub 逆向工具）。工作目录为插件目录。", linkedMapOf(
+            "plugin_id" to stringSchema("插件目录名"),
+            "command" to stringSchema("要在 Ubuntu 容器内执行的 bash 命令"),
+            "timeout_seconds" to integerSchema("命令超时秒数", 60, 1, 600)
+        ), listOf("plugin_id", "command"))
         tool(tools, "move_path", "移动或重命名插件工作区内的文件或目录", linkedMapOf(
             "plugin_id" to stringSchema("插件目录名"),
             "source" to stringSchema("源相对路径"),
@@ -156,7 +168,7 @@ object ScriptPluginAgentWorkspaceTools {
 
     @JvmStatic
     fun requiresWriteApproval(name: String): Boolean {
-        return normalize(name) == "write_file" || normalize(name) == "apply_patch" || normalize(name) == "replace_text" || normalize(name) == "run_shell"
+        return normalize(name) == "write_file" || normalize(name) == "apply_patch" || normalize(name) == "replace_text" || normalize(name) == "run_shell" || normalize(name) == "run_command"
     }
 
     @JvmStatic
@@ -166,6 +178,7 @@ object ScriptPluginAgentWorkspaceTools {
         "apply_patch",
         "replace_text",
         "run_shell",
+        "run_command",
         "move_path",
         "delete_path",
         "restore_path",
@@ -174,17 +187,21 @@ object ScriptPluginAgentWorkspaceTools {
     )
 
     @JvmStatic
-    fun isPreWorkspaceTool(name: String): Boolean = normalize(name) == "check_access"
+    fun isPreWorkspaceTool(name: String): Boolean = normalize(name) in setOf("check_access", "runtime_diagnostics")
 
     @JvmStatic
     fun callPreWorkspaceTool(context: Context, name: String, args: JSONObject): String {
         require(isPreWorkspaceTool(name)) { "不是工作区预检工具: $name" }
-        return checkAccess(context, args)
+        return when (normalize(name)) {
+            "runtime_diagnostics" -> ScriptPluginAgentDiagnostics.read(context, args)
+            else -> checkAccess(context, args)
+        }
     }
 
     @JvmStatic
     fun displayName(name: String): String = when (normalize(name)) {
         "check_access" -> "检查插件文件权限"
+        "runtime_diagnostics" -> "读取插件运行诊断"
         "list_files" -> "列出插件文件"
         "read_file" -> "读取插件文件"
         "search_files" -> "搜索插件文件"
@@ -193,6 +210,7 @@ object ScriptPluginAgentWorkspaceTools {
         "apply_patch" -> "修改插件文件"
         "replace_text" -> "替换插件文件文本"
         "run_shell" -> "在插件目录执行命令"
+        "run_command" -> "在 Ubuntu 终端执行命令"
         "move_path" -> "移动插件路径"
         "delete_path" -> "删除插件路径"
         "restore_path" -> "恢复插件路径"
@@ -942,6 +960,7 @@ object ScriptPluginAgentWorkspaceTools {
                 "apply_patch" -> applyPatch(args)
                 "replace_text" -> replaceText(args)
                 "run_shell" -> runShell(args)
+                "run_command" -> runCommand(args)
                 "move_path" -> movePath(args)
                 "delete_path" -> deletePath(args)
                 "restore_path" -> restorePath(args)
@@ -1425,6 +1444,101 @@ object ScriptPluginAgentWorkspaceTools {
 
         private data class ShellResult(val exitInfo: String, val text: String)
 
+        private fun runCommand(args: JSONObject): String {
+            requireNotDeletingPlugin()
+            val command = args.optString("command", "").trim()
+            require(command.isNotBlank()) { "command 不能为空" }
+            unsafeShellCommand(command)?.let { reason ->
+                return ok().apply {
+                    put("error", "命令被沙箱拦截")
+                    put("reason", reason)
+                }.toString()
+            }
+            if (!ProotEnvironment.isReady(context)) {
+                return ok().apply {
+                    put("error", "Ubuntu 终端环境未安装")
+                    put("hint", "请在「插件 Agent 设置 → 终端环境」中安装，或让用户确认后触发安装")
+                    put("state", ProotEnvironment.currentStatus().state.name)
+                }.toString()
+            }
+            if (ProotEnvironment.needsUpgrade(context)) {
+                if (ProotEnvironment.refreshStatus(context).state != ProotEnvironment.State.INSTALLING) {
+                    Thread { runCatching { ProotEnvironment.install(context) } }.start()
+                }
+                return ok().apply {
+                    put("error", "Ubuntu 终端环境正在更新（新增内置 codex），请稍后重试")
+                    put("hint", "环境更新在后台进行，约 1-3 分钟；完成后重试即可")
+                    put("state", ProotEnvironment.currentStatus().state.name)
+                }.toString()
+            }
+            val timeout = args.optInt("timeout_seconds", 60).coerceIn(1, 600)
+            val result = runProotProcess(command, timeout)
+            changed()
+            return stagedOk().apply {
+                put("command", command)
+                put("exit_info", result.exitInfo)
+                put("output", result.text)
+            }.toString()
+        }
+
+        private fun runProotProcess(command: String, timeoutSeconds: Int): ShellResult {
+            val proot = ProotEnvironment.prootBinary(context)
+            if (!proot.canExecute()) {
+                return ShellResult("退出码: -1", "proot 二进制不可执行: ${proot.absolutePath}")
+            }
+            val sandbox = ProotEnvironment.sandboxDir(context)
+            val bin = ProotEnvironment.binDir(context)
+            val home = ProotEnvironment.homeDir(context)
+            val loaderLib = ProotEnvironment.loaderLib(context)
+            val stageMount = "/plugin"
+
+            val procArgs = mutableListOf(proot.absolutePath, "--kill-on-exit", "-w", stageMount)
+            for (mnt in ProotEnvironment.systemBinds()) {
+                val f = File(mnt)
+                if (f.exists()) procArgs += listOf("-b", f.canonicalPath)
+            }
+            procArgs += listOf(
+                "-b", "/dev",
+                "-b", "/proc",
+                "-b", "/sys",
+                "-b", "/dev/urandom:/dev/random",
+                "-b", "${home.absolutePath}:/home",
+                "-b", "${home.absolutePath}:/root",
+                "-b", "${stageRoot.absolutePath}:$stageMount",
+                "-r", sandbox.absolutePath,
+                "-0",
+                "--link2symlink",
+                "--sysvipc",
+                "-L",
+                "/bin/bash", "-c",
+                "export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin; " +
+                    "export HOME=/root; cd $stageMount 2>/dev/null; $command",
+            )
+            val pb = ProcessBuilder(procArgs)
+            pb.redirectErrorStream(true)
+            pb.environment().apply {
+                put("PROOT_TMP_DIR", File(ProotEnvironment.envRoot(context), "tmp").absolutePath)
+                put("PROOT_LOADER", loaderLib.absolutePath)
+            }
+            val process = try {
+                pb.start()
+            } catch (e: Throwable) {
+                return ShellResult("退出码: -1", "启动 proot 失败: ${e.message.orEmpty()}")
+            }
+            val finished = process.waitFor(timeoutSeconds.toLong(), TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                val partial = readShellOutput(process)
+                return ShellResult(
+                    "退出码: -1 (超时 ${timeoutSeconds}s)",
+                    "命令超时，已强制结束。\n部分输出:\n$partial",
+                )
+            }
+            val out = readShellOutput(process)
+            return ShellResult("退出码: ${process.exitValue()}", out)
+        }
+
+
         /** 安全检查：只拦真正危险/破坏性的命令（系统目录和网络不做拦截），返回拦截原因，null 表示放行 */
         private fun unsafeShellCommand(command: String): String? {
             val lower = command.lowercase(Locale.ROOT)
@@ -1574,6 +1688,8 @@ object ScriptPluginAgentWorkspaceTools {
                 put("modified", JSONArray(summary.modified))
                 put("deleted", JSONArray(summary.deleted))
                 put("canApply", validation.canSave)
+                put("validationScope", if (deletePlugin) "plugin_deletion" else "files_and_beanshell_syntax")
+                put("runtimeVerified", false)
                 put("errors", JSONArray(validation.errors.map { it.message }))
                 put("warnings", JSONArray(validation.warnings.map { it.message }))
                 put("requiresDiff", true)
@@ -1840,9 +1956,12 @@ object ScriptPluginAgentWorkspaceTools {
 
     private fun validateStage(pluginId: String, stage: File): StageValidation {
         val draft = draftFromStage(pluginId, stage)
-        val issues = ScriptPluginAgentValidator.validate(draft).issues.toMutableList()
+        val issues = ScriptPluginAgentValidator.validate(
+            draft,
+            mainSource = File(stage, "main.java").readText(Charsets.UTF_8)
+        ).issues.toMutableList()
         stage.walkTopDown().filter { file ->
-            file.isFile && file.name != "main.java" &&
+            file.isFile && file.relativeTo(stage).invariantSeparatorsPath != "main.java" &&
                 file.extension.lowercase() in setOf("java", "bsh", "js", "kt")
         }.forEach { file ->
             val relative = file.relativeTo(stage).invariantSeparatorsPath

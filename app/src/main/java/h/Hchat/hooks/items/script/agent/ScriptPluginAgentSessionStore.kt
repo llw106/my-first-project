@@ -15,10 +15,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 object ScriptPluginAgentSessionStore {
-    private val attachmentLocks = ConcurrentHashMap<String, Any>()
+    // ID 和路径都来自用户长期创建的会话/附件，不能把它们直接用作永久锁对象的 key。
+    // 固定条带锁仍保持同一 key 的互斥，同时让锁数量与历史记录数量无关。
+    private const val LOCK_STRIPE_COUNT = 64
+    private val attachmentLocks = Array(LOCK_STRIPE_COUNT) { Any() }
     private val attachmentLeaseCounts = HashMap<String, Int>()
     private val attachmentLeaseMonitor = Any()
-    private val sessionSaveLocks = ConcurrentHashMap<String, Any>()
+    private val sessionSaveLocks = Array(LOCK_STRIPE_COUNT) { Any() }
     private val pendingAsyncSaves = ConcurrentHashMap<String, Pair<Context, ScriptPluginAgentSession>>()
     private val queuedAsyncSaves = ConcurrentHashMap.newKeySet<String>()
     private val deletedSessions = ConcurrentHashMap.newKeySet<String>()
@@ -72,7 +75,7 @@ object ScriptPluginAgentSessionStore {
             return
         }
         val safeSessionId = safeId(session.id)
-        synchronized(sessionSaveLocks.computeIfAbsent(safeSessionId) { Any() }) {
+        synchronized(lockFor(sessionSaveLocks, safeSessionId)) {
             if (safeSessionId in deletedSessions) return
             val dir = sessionDir(context)
             if (!dir.isDirectory) dir.mkdirs()
@@ -126,7 +129,7 @@ object ScriptPluginAgentSessionStore {
         val safeSessionId = safeId(id)
         deletedSessions += safeSessionId
         pendingAsyncSaves.remove(safeSessionId)
-        synchronized(sessionSaveLocks.computeIfAbsent(safeSessionId) { Any() }) {
+        synchronized(lockFor(sessionSaveLocks, safeSessionId)) {
             File(sessionDir(context), "$safeSessionId.json").delete()
         }
         ScriptPluginAgentToolResultStore.deleteSession(context, id)
@@ -153,7 +156,7 @@ object ScriptPluginAgentSessionStore {
             val target = managedAttachmentFile(context, attachment.path)
                 ?: throw IllegalStateException("附件路径无效: ${attachment.name}")
             if (target.isFile && target.length() > 0L) return@forEach
-            val lock = attachmentLocks.getOrPut(target.path) { Any() }
+            val lock = lockFor(attachmentLocks, target.path)
             synchronized(lock) {
                 if (target.isFile && target.length() > 0L) return@synchronized
                 val sourceUri = attachment.sourceUri.takeIf { it.isNotBlank() }?.let(Uri::parse)
@@ -235,6 +238,10 @@ object ScriptPluginAgentSessionStore {
         return File(ScriptPluginRuntime.scriptDir(context).parentFile, "Agent/sessions")
     }
 
+    private fun lockFor(stripes: Array<Any>, key: String): Any {
+        return stripes[(key.hashCode() and Int.MAX_VALUE) % stripes.size]
+    }
+
     private fun attachmentRoot(context: Context): File {
         return File(sessionDir(context).parentFile, "attachments")
     }
@@ -279,9 +286,6 @@ object ScriptPluginAgentSessionStore {
                 }
             }
             cleanupAttachments(context, released)
-            released.forEach { attachment ->
-                managedAttachmentFile(context, attachment.path)?.path?.let(attachmentLocks::remove)
-            }
         }
     }
 

@@ -17,7 +17,7 @@ object HchatMediaDownloader {
     private const val FINDER_VIDEO_DECRYPT_BYTES = 128 * 1024
 
     private val httpClient by lazy {
-        OkHttpClient.Builder()
+        HchatHttp.shared.newBuilder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(300, TimeUnit.SECONDS)
             .writeTimeout(300, TimeUnit.SECONDS)

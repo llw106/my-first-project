@@ -37,8 +37,6 @@ import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import java.util.function.Consumer
 import java.util.regex.Pattern
 
@@ -49,13 +47,15 @@ class ScriptWaBridge @JvmOverloads internal constructor(
     private var currentPluginName: String? = null
     private var currentPluginDir: File? = null
     private val atPattern: Pattern = Pattern.compile("\\[AtWx=([^\\]]+)]")
-    private val callbackSeq = AtomicLong(1L)
     private val httpClients = Collections.synchronizedMap(LinkedHashMap<Long, OkHttpClient>())
+    private val httpBaseClient = OkHttpClient()
     private val durationCodec: SilkCodec by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SilkCodec() }
 
     private val delays = ScriptDelayScope(delayOnMainThread) { currentPluginName.orEmpty() }
+    private val asyncScope = ScriptAsyncScope { currentPluginName.orEmpty() }
 
     private companion object {
+        const val MAX_HTTP_CLIENTS = 8
         const val SCRIPT_CONTACT_READ_ATTEMPTS = 5
         const val SCRIPT_CONTACT_READ_DELAY_MS = 250L
         const val VIDEO_DOWNLOAD_TIMEOUT_MS = 60_000L
@@ -504,9 +504,9 @@ class ScriptWaBridge @JvmOverloads internal constructor(
     }
 
     fun sendText(talker: String?, content: String?, callback: Consumer<Any?>?) {
-        async {
+        async(callback) { completion ->
             val ok = runCatching { sendText(talker, content) }.getOrDefault(false)
-            callback?.accept(if (ok) java.lang.Long.valueOf(0L) else null)
+            completion.complete { it.accept(if (ok) java.lang.Long.valueOf(0L) else null) }
         }
     }
 
@@ -949,7 +949,18 @@ class ScriptWaBridge @JvmOverloads internal constructor(
 
     fun delay(millis: Long, action: Runnable?) = delays.delay(millis, action)
 
-    internal fun dispose() = delays.dispose()
+    internal fun dispose() {
+        asyncScope.dispose()
+        delays.dispose()
+        synchronized(httpClients) {
+            httpClients.clear()
+        }
+        runCatching { httpBaseClient.dispatcher.cancelAll() }
+        runCatching { httpBaseClient.dispatcher.executorService.shutdownNow() }
+        httpBaseClient.connectionPool.evictAll()
+        currentPluginName = null
+        currentPluginDir = null
+    }
 
     fun notify(title: String?, text: String?) {
         WeChatApis.interaction().notifier()?.sendNotice(
@@ -986,8 +997,9 @@ class ScriptWaBridge @JvmOverloads internal constructor(
     }
 
     fun get(url: String?, headerMap: Map<*, *>?, timeoutSeconds: Long, callback: Consumer<String?>?) {
-        async {
-            callback?.accept(httpText("GET", url, null, headerMap, timeoutSeconds))
+        async(callback) { completion ->
+            val result = httpText("GET", url, null, headerMap, timeoutSeconds)
+            completion.complete { it.accept(result) }
         }
     }
 
@@ -1007,8 +1019,9 @@ class ScriptWaBridge @JvmOverloads internal constructor(
         timeoutSeconds: Long,
         callback: Consumer<String?>?
     ) {
-        async {
-            callback?.accept(httpText("POST", url, paramMap, headerMap, timeoutSeconds))
+        async(callback) { completion ->
+            val result = httpText("POST", url, paramMap, headerMap, timeoutSeconds)
+            completion.complete { it.accept(result) }
         }
     }
 
@@ -1023,20 +1036,23 @@ class ScriptWaBridge @JvmOverloads internal constructor(
         timeoutSeconds: Long,
         callback: Consumer<File?>?
     ) {
-        async {
-            callback?.accept(downloadFile(url, path, headerMap, timeoutSeconds))
+        async(callback) { completion ->
+            val result = downloadFile(url, path, headerMap, timeoutSeconds)
+            completion.complete { it.accept(result) }
         }
     }
 
     fun downloadImage(url: String?, callback: Consumer<File?>?) {
-        async {
-            callback?.accept(HchatMediaDownloader.downloadImage(bridge.hostContext, url))
+        async(callback) { completion ->
+            val result = HchatMediaDownloader.downloadImage(bridge.hostContext, url)
+            completion.complete { it.accept(result) }
         }
     }
 
     fun downloadImage(url: String?, fileName: String?, callback: Consumer<File?>?) {
-        async {
-            callback?.accept(HchatMediaDownloader.downloadImage(bridge.hostContext, url, fileName))
+        async(callback) { completion ->
+            val result = HchatMediaDownloader.downloadImage(bridge.hostContext, url, fileName)
+            completion.complete { it.accept(result) }
         }
     }
 
@@ -1051,12 +1067,12 @@ class ScriptWaBridge @JvmOverloads internal constructor(
         savePath: String?,
         callback: PluginCallBack.DownloadCallback?
     ) {
-        async {
+        async(callback) { completion ->
             val file = downloadImgInternal(md5, cdnUrl, aesKey, savePath, 2)
             if (file != null && file.isFile && file.length() > 0L) {
-                callback?.onSuccess(file)
+                completion.complete { it.onSuccess(file) }
             } else {
-                callback?.onError(Exception("Image download failed"))
+                completion.complete { it.onError(Exception("Image download failed")) }
             }
         }
     }
@@ -1078,10 +1094,10 @@ class ScriptWaBridge @JvmOverloads internal constructor(
         savePath: String?,
         callback: PluginCallBack.DownloadCallback?
     ) {
-        async {
+        async(callback) { completion ->
             val request = imageDownloadRequest(imageMsg)
             if (request == null) {
-                callback?.onError(IllegalArgumentException("Invalid image message"))
+                completion.complete { it.onError(IllegalArgumentException("Invalid image message")) }
                 return@async
             }
             val file = downloadImgInternal(
@@ -1093,9 +1109,9 @@ class ScriptWaBridge @JvmOverloads internal constructor(
                 request.totalLen
             )
             if (file != null && file.isFile && file.length() > 0L) {
-                callback?.onSuccess(file)
+                completion.complete { it.onSuccess(file) }
             } else {
-                callback?.onError(Exception("Image download failed"))
+                completion.complete { it.onError(Exception("Image download failed")) }
             }
         }
     }
@@ -1107,7 +1123,7 @@ class ScriptWaBridge @JvmOverloads internal constructor(
         savePath: String?,
         callback: PluginCallBack.DownloadCallback?
     ) {
-        async {
+        async(callback) { completion ->
             downloadVideoInternal(
                 VideoDownloadRequest(
                     md5 = md5.orEmpty(),
@@ -1117,7 +1133,7 @@ class ScriptWaBridge @JvmOverloads internal constructor(
                     localFile = null
                 ),
                 savePath,
-                callback
+                completion
             )
         }
     }
@@ -1127,13 +1143,13 @@ class ScriptWaBridge @JvmOverloads internal constructor(
         savePath: String?,
         callback: PluginCallBack.DownloadCallback?
     ) {
-        async {
+        async(callback) { completion ->
             val request = videoDownloadRequest(videoMessage)
             if (request == null) {
-                callback?.onError(IllegalArgumentException("Invalid video message"))
+                completion.complete { it.onError(IllegalArgumentException("Invalid video message")) }
                 return@async
             }
-            downloadVideoInternal(request, savePath, callback)
+            downloadVideoInternal(request, savePath, completion)
         }
     }
 
@@ -1155,7 +1171,7 @@ class ScriptWaBridge @JvmOverloads internal constructor(
         downloadVideoInternal(
             resolvedRequest,
             savePath,
-            object : PluginCallBack.DownloadCallback {
+            asyncScope.callback(object : PluginCallBack.DownloadCallback {
                 override fun onSuccess(file: File) {
                     downloaded = file
                     completed.countDown()
@@ -1164,7 +1180,7 @@ class ScriptWaBridge @JvmOverloads internal constructor(
                 override fun onError(error: Exception) {
                     completed.countDown()
                 }
-            }
+            }) ?: return null
         )
         try {
             completed.await(VIDEO_DOWNLOAD_TIMEOUT_MS + 5_000L, TimeUnit.MILLISECONDS)
@@ -1188,7 +1204,7 @@ class ScriptWaBridge @JvmOverloads internal constructor(
         savePath: String?,
         callback: PluginCallBack.DownloadCallback?
     ) {
-        async {
+        async(callback) { completion ->
             runCatching {
                 val media = FinderMediaDownloadSupport.extractMedia(finderFeedOrMessage)
                     ?: throw IllegalArgumentException("Invalid Finder feed or media message")
@@ -1209,11 +1225,11 @@ class ScriptWaBridge @JvmOverloads internal constructor(
                     savePath
                 ) ?: throw IllegalStateException("Finder media download failed")
             }.onSuccess { file ->
-                callback?.onSuccess(file)
+                completion.complete { it.onSuccess(file) }
             }.onFailure { error ->
                 val exception = error as? Exception
                     ?: RuntimeException("Finder media download failed", error)
-                callback?.onError(exception)
+                completion.complete { it.onError(exception) }
             }
         }
     }
@@ -1411,23 +1427,10 @@ class ScriptWaBridge @JvmOverloads internal constructor(
     private fun downloadVideoInternal(
         request: VideoDownloadRequest,
         savePath: String?,
-        callback: PluginCallBack.DownloadCallback?
+        completion: ScriptAsyncScope.Callback<PluginCallBack.DownloadCallback>
     ) {
-        val completed = AtomicBoolean(false)
-        val timeoutKey = "script_video_download_timeout_${callbackSeq.getAndIncrement()}"
-        val taskApi = WeChatApis.runtime().tasks()
-        val success: (File) -> Unit = { file ->
-            if (completed.compareAndSet(false, true)) {
-                taskApi?.cancel(timeoutKey)
-                callback?.onSuccess(file)
-            }
-        }
-        val failure: (Exception) -> Unit = { error ->
-            if (completed.compareAndSet(false, true)) {
-                taskApi?.cancel(timeoutKey)
-                callback?.onError(error)
-            }
-        }
+        val success: (File) -> Unit = { file -> completion.complete { it.onSuccess(file) } }
+        val failure: (Exception) -> Unit = { error -> completion.complete { it.onError(error) } }
         val target = videoTargetFile(savePath, request.md5)
         target.parentFile?.let { if (!it.isDirectory) it.mkdirs() }
 
@@ -1472,19 +1475,8 @@ class ScriptWaBridge @JvmOverloads internal constructor(
             failure(IllegalStateException("Unable to replace existing video file"))
             return
         }
-        if (taskApi != null) {
-            taskApi.runOnMainDelayed(timeoutKey, VIDEO_DOWNLOAD_TIMEOUT_MS) {
-                async { failure(Exception("Video download timed out")) }
-            }
-        } else {
-            Thread({
-                try {
-                    Thread.sleep(VIDEO_DOWNLOAD_TIMEOUT_MS)
-                    failure(Exception("Video download timed out"))
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-            }, timeoutKey).start()
+        completion.onTimeout(VIDEO_DOWNLOAD_TIMEOUT_MS) {
+            failure(Exception("Video download timed out"))
         }
         val submitted = videoApi.downloadCdn(
             request.md5,
@@ -1578,14 +1570,16 @@ class ScriptWaBridge @JvmOverloads internal constructor(
     }
 
     fun downloadImages(urlList: List<*>?, callback: Consumer<List<File>>?) {
-        async {
-            callback?.accept(HchatMediaDownloader.downloadImages(bridge.hostContext, urlList))
+        async(callback) { completion ->
+            val result = HchatMediaDownloader.downloadImages(bridge.hostContext, urlList)
+            completion.complete { it.accept(result) }
         }
     }
 
     fun downloadImages(urlList: List<*>?, prefix: String?, callback: Consumer<List<File>>?) {
-        async {
-            callback?.accept(HchatMediaDownloader.downloadImages(bridge.hostContext, urlList, prefix))
+        async(callback) { completion ->
+            val result = HchatMediaDownloader.downloadImages(bridge.hostContext, urlList, prefix)
+            completion.complete { it.accept(result) }
         }
     }
 
@@ -1712,15 +1706,18 @@ class ScriptWaBridge @JvmOverloads internal constructor(
         return result
     }
 
-    private fun async(block: () -> Unit) {
-        val key = "script_http_${callbackSeq.getAndIncrement()}"
-        val tasks = WeChatApis.runtime().tasks()
-        if (tasks != null) {
-            tasks.runAsync { runCatching(block).onFailure { bridge.log("异步任务失败: ${it.message}") } }
-        } else {
-            Thread({
-                runCatching(block).onFailure { bridge.log("异步任务失败: ${it.message}") }
-            }, key).start()
+    private fun <T : Any> async(callback: T?, block: (ScriptAsyncScope.Callback<T>) -> Unit) {
+        val completion = asyncScope.callback(callback) ?: return
+        if (!asyncScope.submit {
+                try {
+                    block(completion)
+                } catch (error: Throwable) {
+                    completion.cancel()
+                    throw error
+                }
+            }
+        ) {
+            completion.cancel()
         }
     }
 
@@ -1775,7 +1772,7 @@ class ScriptWaBridge @JvmOverloads internal constructor(
             } else {
                 requestBuilder.get()
             }
-            httpClient(timeoutSeconds).newCall(requestBuilder.build()).execute().use { response ->
+            executeHttp(httpClient(timeoutSeconds).newCall(requestBuilder.build())) { response ->
                 response.body?.string()
             }
         }.onFailure {
@@ -1798,8 +1795,8 @@ class ScriptWaBridge @JvmOverloads internal constructor(
                 .applyHeaders(normalizeMap(headerMap))
                 .get()
                 .build()
-            httpClient(timeoutSeconds).newCall(request).execute().use { response ->
-                val body = response.body ?: return@runCatching null
+            executeHttp(httpClient(timeoutSeconds).newCall(request)) { response ->
+                val body = response.body ?: throw java.io.IOException("下载响应为空")
                 BufferedInputStream(body.byteStream()).use { input ->
                     FileOutputStream(target).use { output ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -1885,13 +1882,32 @@ class ScriptWaBridge @JvmOverloads internal constructor(
     private fun httpClient(timeoutSeconds: Long): OkHttpClient {
         val timeout = timeoutSeconds.coerceAtLeast(1L).coerceAtMost(300L)
         return httpClients.getOrPut(timeout) {
-            OkHttpClient.Builder()
+            while (httpClients.size >= MAX_HTTP_CLIENTS) {
+                val iterator = httpClients.entries.iterator()
+                if (!iterator.hasNext()) break
+                iterator.next()
+                iterator.remove()
+            }
+            httpBaseClient.newBuilder()
                 .connectTimeout(timeout, TimeUnit.SECONDS)
                 .readTimeout(timeout, TimeUnit.SECONDS)
                 .writeTimeout(timeout, TimeUnit.SECONDS)
                 .followRedirects(true)
                 .followSslRedirects(true)
                 .build()
+        }
+    }
+
+    private fun <T> executeHttp(call: okhttp3.Call, action: (okhttp3.Response) -> T): T {
+        val cancel = { call.cancel() }
+        if (!asyncScope.registerCancellation(cancel)) {
+            call.cancel()
+            throw java.io.IOException("插件已卸载")
+        }
+        try {
+            return call.execute().use(action)
+        } finally {
+            asyncScope.removeCancellation(cancel)
         }
     }
 

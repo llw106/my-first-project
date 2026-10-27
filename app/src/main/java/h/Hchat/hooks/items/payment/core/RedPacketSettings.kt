@@ -90,7 +90,6 @@ class RedPacketSettings @JvmOverloads constructor(
         const val KEY_KEYWORDS = "hb_keywords"
         const val KEY_BLOCK_NEW_GROUP_ENABLE = "hb_block_new_group_enable"
         const val KEY_BLOCK_NEW_GROUP_KNOWN = "hb_block_new_group_known"
-        const val KEY_LOG_ENABLE = "hb_log_enable"
         const val KEY_CHECK_TIMES = "hb_check_times"
         const val KEY_WISH_ENABLE = "hb_wish_enable"
         const val KEY_WISH_TEXT = "hb_wish_text"

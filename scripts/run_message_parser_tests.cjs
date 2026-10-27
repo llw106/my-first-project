@@ -39,6 +39,10 @@ run(java, ['-Xmx256m', '-cp', compiler.join(path.delimiter), 'org.jetbrains.kotl
 const classpath = [output, models, stdlib].join(path.delimiter);
 run(process.env.JAVAC || 'javac', ['-cp', classpath, '-d', output,
     source + 'hooks/api/message/WeChatMessageParseApi.java',
+    source + 'utils/XmlValueReader.java',
+    source + 'hooks/items/payment/detect/RedPacketParser.java',
+    'scripts/tests/redpacket_parser/MessageParserRegression.java',
     ...fs.readdirSync(path.join(root, tests)).filter(file => file.endsWith('.java')).map(file => tests + file)]);
 run(java, ['-cp', classpath, 'h.Hchat.hooks.api.message.ParserRegression']);
+run(java, ['-cp', classpath, 'h.Hchat.hooks.items.payment.detect.MessageParserRegression']);
 console.log('Test artifacts: ' + output);

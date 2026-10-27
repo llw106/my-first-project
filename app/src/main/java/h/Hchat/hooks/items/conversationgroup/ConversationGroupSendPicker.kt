@@ -5,12 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import h.Hchat.utils.HLog
 import java.io.File
 import java.io.FileOutputStream
-import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -20,78 +17,75 @@ internal object ConversationGroupSendPicker {
     private const val REQUEST_CODE_END = 0x76ff
     private const val CACHE_MAX_AGE_MS = 24L * 60L * 60L * 1000L
     private val nextRequestCode = AtomicInteger(REQUEST_CODE_START)
-    private val pending = ConcurrentHashMap<Int, Pending>()
-    private val hookedClasses = ConcurrentHashMap.newKeySet<Class<*>>()
-    private val destroyHookedClasses = ConcurrentHashMap.newKeySet<Class<*>>()
+    private val pending = ConcurrentHashMap<Int, ConversationGroupFileRequest<PickedFile?>>()
+    private val requests = ConcurrentHashMap<Int, ConversationGroupFileRequest<PickedFile?>>()
+    private val hooks = ConversationGroupFileResultHooks(::onResult)
 
-    fun launch(
-        activity: Activity,
-        mimeType: String,
-        chooserTitle: String,
-        callback: (PickedFile?) -> Unit
-    ) {
-        hookActivityHierarchy(activity.javaClass)
+    @Synchronized
+    fun launch(activity: Activity, mimeType: String, chooserTitle: String, callback: (PickedFile?) -> Unit) {
+        if (activity.isFinishing || activity.isDestroyed) return
+        if (!hooks.ensure(activity.javaClass)) {
+            cancelAll()
+            callback(null)
+            return
+        }
         val requestCode = allocateRequestCode()
-        pending[requestCode] = Pending(WeakReference(activity), callback)
+        val request = ConversationGroupFileRequest.create(activity, callback) {
+            pending.remove(requestCode)
+            requests.remove(requestCode)
+        }
+        if (request == null) {
+            callback(null)
+            return
+        }
+        requests[requestCode] = request
+        pending[requestCode] = request
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = mimeType
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }.preferSystemDocumentsUi(activity)
-        runCatching { activity.startActivityForResult(intent, requestCode) }
-            .onFailure { firstError ->
-                val fallback = Intent.createChooser(
-                    Intent(Intent.ACTION_GET_CONTENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = mimeType
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    },
-                    chooserTitle
-                )
-                runCatching { activity.startActivityForResult(fallback, requestCode) }
-                    .onFailure { secondError ->
-                        pending.remove(requestCode)?.deliver(null)
-                        HLog.e("$TAG 启动发送文件选择器失败: ${secondError.message}", secondError)
-                        HLog.e("$TAG 系统文档选择器错误: ${firstError.message}", firstError)
-                    }
+        runCatching { activity.startActivityForResult(intent, requestCode) }.onFailure { firstError ->
+            val fallback = Intent.createChooser(Intent(Intent.ACTION_GET_CONTENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = mimeType
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }, chooserTitle)
+            runCatching { activity.startActivityForResult(fallback, requestCode) }.onFailure { secondError ->
+                pending.remove(requestCode)
+                request.deliver(null)
+                HLog.e("$TAG 启动发送文件选择器失败: ${secondError.message}", secondError)
+                HLog.e("$TAG 系统文档选择器错误: ${firstError.message}", firstError)
             }
-    }
-
-    private fun hookActivityHierarchy(activityClass: Class<*>) {
-        var current: Class<*>? = activityClass
-        while (current != null && Activity::class.java.isAssignableFrom(current)) {
-            hookActivityResult(current)
-            hookActivityDestroy(current)
-            current = current.superclass
         }
     }
 
-    private fun hookActivityResult(clazz: Class<*>) {
-        if (!hookedClasses.add(clazz)) return
-        runCatching {
-            XposedBridge.hookAllMethods(clazz, "onActivityResult", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    val requestCode = param.args.getOrNull(0) as? Int ?: return
-                    val request = pending[requestCode] ?: return
-                    val activity = request.activity.get()
-                    if (activity == null) {
-                        pending.remove(requestCode, request)
-                        return
-                    }
-                    if (param.thisObject !== activity || !pending.remove(requestCode, request)) return
-                    val resultCode = param.args.getOrNull(1) as? Int ?: Activity.RESULT_CANCELED
-                    val data = param.args.getOrNull(2) as? Intent
-                    val uri = data?.data
-                    if (resultCode != Activity.RESULT_OK || uri == null) {
-                        request.deliver(null)
-                        return
-                    }
-                    takeReadPermission(activity, data, uri)
-                    request.deliver(PickedFile(uri, displayName(activity, uri)))
-                }
-            })
-        }.onFailure { hookedClasses.remove(clazz) }
+    @Synchronized
+    fun cancelAll() {
+        requests.values.toList().forEach { it.cancel() }
+        pending.clear()
+        hooks.clear()
+    }
+
+    private fun onResult(activity: Activity, code: Int, resultCode: Int, data: Intent?) {
+        val request = pending[code] ?: return
+        if (request.activity.get() !== activity || !pending.remove(code, request)) return
+        val uri = data?.data
+        if (resultCode != Activity.RESULT_OK || uri == null) {
+            request.deliver(null)
+            return
+        }
+        val context = activity.applicationContext
+        request.execute(task = { canceled ->
+            if (canceled.get()) throw java.util.concurrent.CancellationException()
+            takeReadPermission(context, data, uri)
+            if (canceled.get()) throw java.util.concurrent.CancellationException()
+            PickedFile(uri, displayName(context, uri))
+        }, failure = { error ->
+            HLog.e("$TAG 读取发送文件信息失败", error)
+            null
+        })
     }
 
     fun materialize(context: Context, picked: PickedFile): MaterializedFile {
@@ -105,13 +99,13 @@ internal object ConversationGroupSendPicker {
         return MaterializedFile(target.absolutePath, picked.displayName)
     }
 
-    private fun takeReadPermission(activity: Activity, data: Intent, uri: Uri) {
+    private fun takeReadPermission(context: Context, data: Intent, uri: Uri) {
         if (uri.scheme != "content") return
         runCatching {
             val flags = data.flags and
                 (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             if ((flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0) {
-                activity.contentResolver.takePersistableUriPermission(
+                context.contentResolver.takePersistableUriPermission(
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
@@ -167,31 +161,14 @@ internal object ConversationGroupSendPicker {
         }
     }
 
-    private fun hookActivityDestroy(clazz: Class<*>) {
-        if (!destroyHookedClasses.add(clazz)) return
-        runCatching {
-            XposedBridge.hookAllMethods(clazz, "onDestroy", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    val activity = param.thisObject as? Activity ?: return
-                    pending.entries.forEach { entry ->
-                        val owner = entry.value.activity.get()
-                        if (owner == null || owner === activity) pending.remove(entry.key, entry.value)
-                    }
-                }
-            })
-        }.onFailure { destroyHookedClasses.remove(clazz) }
-    }
-
     private fun allocateRequestCode(): Int {
         repeat(REQUEST_CODE_END - REQUEST_CODE_START + 1) {
             val candidate = nextRequestCode.updateAndGet { current ->
                 if (current >= REQUEST_CODE_END) REQUEST_CODE_START else current + 1
             }
-            if (!pending.containsKey(candidate)) return candidate
+            if (!requests.containsKey(candidate)) return candidate
         }
-        val oldest = pending.keys.minOrNull() ?: REQUEST_CODE_START
-        pending.remove(oldest)?.deliver(null)
-        return oldest
+        error("文件选择请求已满")
     }
 
     private fun Intent.preferSystemDocumentsUi(context: Context): Intent {
@@ -205,18 +182,6 @@ internal object ConversationGroupSendPicker {
             }
         }
         return this
-    }
-
-    private data class Pending(
-        val activity: WeakReference<Activity>,
-        val callback: (PickedFile?) -> Unit
-    ) {
-        fun deliver(result: PickedFile?) {
-            val owner = activity.get() ?: return
-            owner.runOnUiThread {
-                if (!owner.isFinishing && !owner.isDestroyed) callback(result)
-            }
-        }
     }
 
     data class PickedFile(val uri: Uri, val displayName: String)

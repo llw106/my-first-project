@@ -9,6 +9,7 @@ import h.Hchat.hooks.items.groupnicknamecolor.GroupNicknameColorSettingsProvider
 import h.Hchat.hooks.items.groupnicknamecolor.GroupNicknameColorStore
 
 class RealNameTailFeature : BaseFeature() {
+    private var scheduler: RealNameTailScheduler? = null
     private var store: RealNameTailStore? = null
     private var renderer: RealNameTailRenderer? = null
     private var profilePrefetcher: ContactProfilePrefetcher? = null
@@ -30,6 +31,7 @@ class RealNameTailFeature : BaseFeature() {
         val scheduler = RealNameTailScheduler(localStore, query, ::logFeatureError) { wxid ->
             renderer?.applyForSender(wxid)
         }
+        this.scheduler = scheduler
         val prefetcher = ContactProfilePrefetcher(context, ::logFeatureError) { wxid ->
             renderer?.applyForSender(wxid)
         }
@@ -51,6 +53,15 @@ class RealNameTailFeature : BaseFeature() {
             scheduler.onMessage(roomId, sender)
             if (localStore.hasTail(sender)) renderer?.applyForSender(sender)
         })
+    }
+
+    override fun onFeatureDestroy(context: FeatureContext) {
+        scheduler?.destroy()
+        scheduler = null
+        renderer?.profilePrefetcher = null
+        renderer = null
+        profilePrefetcher = null
+        store = null
     }
 
     private fun logFeatureError(message: String, throwable: Throwable?) {

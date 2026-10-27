@@ -42,6 +42,8 @@ android {
             signingConfig = signingConfigs.getByName("。。")
             isMinifyEnabled = true
             isShrinkResources = true
+            // 说明：开启 R8（代码裁剪 + 混淆 + 资源压缩），体积接近原版；
+            // 反编译可读性下降，需要排查时改数据开关 -dontobfuscate。
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -61,7 +63,11 @@ android {
 
     packaging {
         jniLibs {
+            // 保持 true：proot 需要 libproot.so 被解压到 nativeLibraryDir 才能 exec 运行。
+            // libtermux.so 的加载不走 classloader.findLibrary，改由 Hchat 用绝对路径
+            // System.load() 加载（见 NativeLibraryLoader.loadTermux + com.termux.terminal.JNI 补丁）。
             useLegacyPackaging = true
+            // 本机构建没有 NDK，跳过 .so 符号剥离（否则 AGP 会去下载 NDK）
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -95,7 +101,7 @@ kotlin {
 dependencies {
     compileOnly("de.robv.android.xposed:api:82")
     implementation("io.github.billywei01:fastkv:3.0.1")
-    implementation(files("libs/dexkit-2.2.0-76551eb.aar"))
+    implementation(files("libs/dexkit-2.2.0-76551eb-idle.aar"))
     implementation("com.google.flatbuffers:flatbuffers-java:23.5.26")
     implementation("dev.rikka.ndk.thirdparty:cxx:1.2.0")
     implementation("com.github.REAndroid:ARSCLib:V1.3.8")
@@ -129,6 +135,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation(files("libs/miuix-blur-android-0.9.4.aar"))
     implementation(files("libs/miuix-shader-android-0.9.4.aar"))
+    // Termux 终端（GPLv3，LSPilot 同款）：terminal-view 依赖 terminal-emulator
+    implementation(files("libs/terminal-emulator-0.118.0.aar"))
+    implementation(files("libs/terminal-view-0.118.0.aar"))
 }
 
 // 构建完成后自动复制 APK 到 dist/

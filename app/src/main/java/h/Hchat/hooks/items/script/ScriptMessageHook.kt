@@ -21,6 +21,7 @@ object ScriptMessageHook {
     private const val MESSAGE_DISPATCH_QUEUE_CAPACITY = 128
     private const val OVERFLOW_LOG_INTERVAL_MS = 10_000L
     private const val MEDIA_DISPATCH_QUEUE_CAPACITY = 32
+    private const val MAX_RECENT_MESSAGES = 4096
     private val USERNAME_REGEX = Regex("[a-z0-9_\\-.]{3,}")
     @Volatile
     private var installed = false
@@ -98,6 +99,7 @@ object ScriptMessageHook {
         }
         val dispatch = ScriptPluginRuntime.captureHandleMsgDispatch(message) ?: return
         keys.forEach { key -> recentMessages[key] = now }
+        trimRecentMessages()
         try {
             dispatchExecutor.execute {
                 if (!ScriptPluginRuntime.hasHandleMsgCallbacks()) return@execute
@@ -269,7 +271,16 @@ object ScriptMessageHook {
     }
 
     private fun cleanup(now: Long) {
-        if (recentMessages.size < 128) return
-        recentMessages.entries.removeIf { now - it.value > dedupWindowMs(it.key) }
+        if (recentMessages.size >= 128) {
+            recentMessages.entries.removeIf { now - it.value > dedupWindowMs(it.key) }
+        }
+        trimRecentMessages()
+    }
+
+    private fun trimRecentMessages() {
+        while (recentMessages.size > MAX_RECENT_MESSAGES) {
+            val oldest = recentMessages.entries.minByOrNull { it.value } ?: return
+            if (!recentMessages.remove(oldest.key, oldest.value)) continue
+        }
     }
 }

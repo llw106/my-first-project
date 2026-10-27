@@ -16,6 +16,8 @@ import h.Hchat.hooks.items.payment.notify.RedPacketTemplateFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 抢到红包后的自动回复。
@@ -35,6 +37,7 @@ public final class RedPacketAutoReply {
     private final Logger logger;
     private final RedPacketTemplateFormatter formatter;
     private final Random random = new Random();
+    private final Set<String> pendingReplyTaskKeys = ConcurrentHashMap.newKeySet();
     private static final String AT_SENDER_TOKEN = "{@发红包的人}";
     private static final String[] AT_SENDER_TOKENS = new String[] {
             AT_SENDER_TOKEN,
@@ -97,16 +100,37 @@ public final class RedPacketAutoReply {
                                    String sender, List<ReplyPlan> plans, int index) {
         if (index >= plans.size()) return;
         ReplyPlan plan = plans.get(index);
-        tasks.runOnMainDelayed(replyKey + ":step:" + index, plan.delayMs, () -> {
+        String taskKey = replyKey + ":step:" + index;
+        pendingReplyTaskKeys.add(taskKey);
+        tasks.runOnMainDelayed(taskKey, plan.delayMs, () -> {
+            pendingReplyTaskKeys.remove(taskKey);
             if (!isReplyEnabled()) {
                 log("自动回复跳过: 全局开关已关闭");
+                tasks.clearRunState(replyKey);
                 return;
             }
             sendReply(talker, plan.content, sender, plan.atSender, plan.replyMode, plan.delayMs);
             if (isReplyEnabled()) {
                 scheduleReplyStep(tasks, replyKey, talker, sender, plans, index + 1);
             }
+            clearReplyRunState(tasks, replyKey, index, plans.size());
         });
+    }
+
+    public void cancelPendingReplies() {
+        WeChatTaskApi tasks = WeChatApis.runtime().tasks();
+        if (tasks != null) {
+            for (String key : pendingReplyTaskKeys) {
+                tasks.cancel(key);
+                int separator = key.indexOf(":step:");
+                if (separator > 0) tasks.clearRunState(key.substring(0, separator));
+            }
+        }
+        pendingReplyTaskKeys.clear();
+    }
+
+    private void clearReplyRunState(WeChatTaskApi tasks, String replyKey, int index, int size) {
+        if (index + 1 >= size) tasks.clearRunState(replyKey);
     }
 
     private void sendReplySequence(String talker, String sender, List<ReplyPlan> plans) {

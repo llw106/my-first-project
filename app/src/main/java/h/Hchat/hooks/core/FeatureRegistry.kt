@@ -5,13 +5,13 @@ import h.Hchat.hooks.items.audiotransform.AudioTransformFeature
 import h.Hchat.hooks.items.antirecall.AntiRecallFeature
 import h.Hchat.hooks.items.atallnotify.AtAllNotificationBlockFeature
 import h.Hchat.hooks.items.automessageforward.AutoMessageForwardFeature
-import h.Hchat.hooks.items.autoreply.AutoReplyFeature
 import h.Hchat.hooks.items.autooriginal.AutoOriginalImageFeature
 import h.Hchat.hooks.items.autovieworiginal.AutoViewOriginalFeature
 import h.Hchat.hooks.items.callmedialimit.CallMediaLimitFeature
 import h.Hchat.hooks.items.callmedialimit.CallRingtoneBlockFeature
 import h.Hchat.hooks.items.chattime.ChatTimeStyleFeature
 import h.Hchat.hooks.items.conversationgroup.ConversationGroupFeature
+import h.Hchat.hooks.items.conversationtabs.ConversationTabsFeature
 import h.Hchat.hooks.items.custombottombar.CustomBottomBarFeature
 import h.Hchat.hooks.items.customfriendavatar.CustomFriendAvatarFeature
 import h.Hchat.hooks.items.customnotify.CustomNotificationFeature
@@ -60,6 +60,7 @@ import h.Hchat.hooks.items.momentsfake.MomentsFakeInteractionFeature
 import h.Hchat.hooks.items.multirecall.MultiRecallFeature
 import h.Hchat.hooks.items.payment.core.AutoRedPacketFeature
 import h.Hchat.hooks.items.payment.fakebalance.FakeWalletBalanceFeature
+import h.Hchat.hooks.items.payment.gift.AutoGiftFeature
 import h.Hchat.hooks.items.payment.transfer.AutoTransferFeature
 import h.Hchat.hooks.items.patblock.PatBlockFeature
 import h.Hchat.hooks.items.profileid.ProfileIdFeature
@@ -105,6 +106,7 @@ object FeatureRegistry {
             .register(RealNameTailFeature())
             .register(MemberTitleFeature())
             .register(AutoRedPacketFeature())
+            .register(AutoGiftFeature())
             .register(WeChatTabletFeature())
             .register(AutoTransferFeature())
             .register(FakeWalletBalanceFeature())
@@ -118,9 +120,13 @@ object FeatureRegistry {
             .register(QuickMomentsFeature())
             .register(QuickMarkReadFeature())
             .register(QuickTerminateFeature())
-            .register(AutoReplyFeature())
+            // 自动回复已下线：它会在后台常驻 AI 会话历史、小智 WebSocket、
+            // AudioRecord 与 OkHttp 连接池。源码保留，仅在注册表里摘除，
+            // 这样 AutoReplyRuntime / Xiaozhi* 相关类不会被加载。
+            // .register(AutoReplyFeature())
             .register(AutoMessageForwardFeature())
             .register(ConversationGroupFeature())
+            .register(ConversationTabsFeature())
             .register(MessageAffixFeature())
             .register(TypingReportBlockFeature())
             .register(PatBlockFeature())

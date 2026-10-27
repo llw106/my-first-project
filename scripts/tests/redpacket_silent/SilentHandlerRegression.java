@@ -6,6 +6,7 @@ import h.Hchat.hooks.api.net.WeChatNetworkDispatcher;
 import h.Hchat.hooks.api.runtime.WeChatTaskApi;
 import h.Hchat.hooks.core.HookRegistry;
 import h.Hchat.hooks.items.payment.core.RedPacketSettings;
+import h.Hchat.hooks.items.payment.core.RedPacketEffectiveRule;
 import h.Hchat.hooks.items.payment.core.RedPacketState;
 import h.Hchat.utils.HLog;
 import java.util.ArrayList;
@@ -38,12 +39,20 @@ public final class SilentHandlerRegression {
         scenario("retry exhaustion cleans request ownership", SilentHandlerRegression::retryExhaustion);
         scenario("selected group candidate survives timeout retry", SilentHandlerRegression::groupCandidates);
         scenario("union responses use the same request correlation", SilentHandlerRegression::unionPackets);
+        scenario("receive callback can recover after request wrapping", SilentHandlerRegression::receiveCallbackFallback);
+        scenario("open callback can recover after request wrapping", SilentHandlerRegression::openCallbackFallback);
+        scenario("enterprise packets never fall back to ordinary request classes", SilentHandlerRegression::unionClassesRequired);
+        scenario("failed union open construction does not use ordinary open class", SilentHandlerRegression::unionOpenDoesNotFallback);
         scenario("receive errors cannot consume a successful candidate", SilentHandlerRegression::receiveErrors);
         scenario("synchronous callbacks see ownership before dispatch", SilentHandlerRegression::synchronousCallbacks);
         scenario("duplicate concurrent open callbacks settle once", SilentHandlerRegression::concurrentDuplicate);
         scenario("cleanup of one packet leaves other requests intact", SilentHandlerRegression::isolatedCleanup);
         scenario("failed/zero/sender amounts cannot become successful grabs", SilentHandlerRegression::invalidAmounts);
         scenario("disabled mode and incomplete receive responses do not open", SilentHandlerRegression::disabledAndIncomplete);
+        scenario("chat silent rule overrides global UI throughout receive/open/retry", SilentHandlerRegression::silentRuleOverridesGlobalUi);
+        scenario("chat UI or disabled rule cannot dispatch through silent handler", SilentHandlerRegression::nonSilentRules);
+        scenario("total switch guards silent entry, callbacks and queued open retry", SilentHandlerRegression::totalSwitch);
+        scenario("pending silent task survives later global mode changes", SilentHandlerRegression::pendingModeChange);
         System.out.println("Silent red-packet regression: " + checks + " checks, " + scenarios
                 + " scenarios, " + failures + " failures");
         if (failures != 0) throw new AssertionError("Silent red-packet regression failed");
@@ -277,6 +286,91 @@ public final class SilentHandlerRegression {
             f.fire(open, amount(50));
             equal(1, f.notices.size(), "union callback without sendId settles its request");
         }
+
+        Fixture explicitNonUnionScene = new Fixture();
+        ReceiveRequest receive = explicitNonUnionScene.startWithUrl(
+                "union-explicit-scene",
+                "room@im.chatroom",
+                urlWithScene("union-explicit-scene", "1002"));
+        check(receive instanceof UnionReceiveRequest,
+                "enterprise group keeps the union request when sceneid is not 1005");
+        explicitNonUnionScene.fire(receive, timing("union-explicit-token"));
+        OpenRequest open = explicitNonUnionScene.open("union-explicit-scene");
+        check(open instanceof UnionOpenRequest,
+                "enterprise group keeps the union open request when sceneid is not 1005");
+        explicitNonUnionScene.fire(open, amount(50));
+        equal(1, explicitNonUnionScene.notices.size(),
+                "enterprise group with explicit non-1005 scene settles normally");
+
+        Fixture ordinaryGroupWithOpenImSender = new Fixture();
+        ReceiveRequest ordinaryReceive = ordinaryGroupWithOpenImSender.startWithUrlAndContent(
+                "ordinary-openim-sender",
+                "room@chatroom",
+                urlWithScene("ordinary-openim-sender", "1002"),
+                "<fromusername>contact@openim</fromusername>");
+        check(ordinaryReceive.getClass() == ReceiveRequest.class,
+                "ordinary group with an enterprise sender keeps the normal request");
+    }
+
+    private static void unionClassesRequired() throws Throwable {
+        Fixture receiveMissing = new Fixture();
+        receiveMissing.dex.receiveLuckyMoneyUnionClass = null;
+        receiveMissing.dex.unionReceiveCtor = null;
+        receiveMissing.handler.tryReceive("", "contact@openim", url("missing-union-receive", true));
+        equal(0, receiveMissing.network.attempts.size(),
+                "missing union receive class does not dispatch an ordinary receive request");
+        check(!receiveMissing.state.silentReceivingSet.contains("missing-union-receive"),
+                "missing union receive class releases the packet state");
+
+        Fixture openMissing = new Fixture();
+        openMissing.dex.openLuckyMoneyUnionClass = null;
+        openMissing.dex.unionOpenCtor10 = null;
+        openMissing.dex.unionOpenCtor9 = null;
+        openMissing.handler.tryReceive("", "contact@openim", url("missing-union-open", true));
+        equal(0, openMissing.network.attempts.size(),
+                "missing union open class prevents receiving through the ordinary request");
+        check(!openMissing.state.silentReceivingSet.contains("missing-union-open"),
+                "missing union open class releases the packet state");
+    }
+
+    private static void unionOpenDoesNotFallback() throws Throwable {
+        Fixture f = new Fixture();
+        ReceiveRequest receive = f.start("union-open-failure", "contact@openim", true);
+        f.dex.openLuckyMoneyUnionClass = BrokenUnionOpenRequest.class;
+        f.dex.unionOpenCtor10 = null;
+        f.dex.unionOpenCtor9 = null;
+        f.fire(receive, timing("union-open-token"));
+        equal(0, f.opens("union-open-failure").size(),
+                "failed union constructor does not dispatch the ordinary open class");
+        equal(1, f.failed.size(), "failed union constructor reports one failure");
+        check(f.failed.get(0).reason().contains("拆红包请求构造失败"),
+                "failed union constructor reports its actual failure");
+    }
+
+    private static void receiveCallbackFallback() throws Throwable {
+        Fixture f = new Fixture();
+        ReceiveRequest original = f.start("receive-wrapper", "contact@openim", true);
+        ReceiveRequest wrapped = new UnionReceiveRequest(1, 2, "receive-wrapper",
+                url("receive-wrapper", true), 1, "v1.0");
+        f.fire(wrapped, timing("wrapped-token").put("sendId", "receive-wrapper"));
+        equal(1, f.opens("receive-wrapper").size(),
+                "wrapped receive callback still creates one open request");
+        equal("wrapped-token", f.open("receive-wrapper").timing,
+                "wrapped receive callback keeps its timing token");
+        check(original != wrapped, "fallback test uses a different callback object");
+    }
+
+    private static void openCallbackFallback() throws Throwable {
+        Fixture f = new Fixture();
+        ReceiveRequest receive = f.start("open-wrapper", "contact@openim", true);
+        f.fire(receive, timing("open-wrapper-token"));
+        OpenRequest original = f.open("open-wrapper");
+        OpenRequest wrapped = new UnionOpenRequest(1, 2, "open-wrapper",
+                url("open-wrapper", true), "head-image", "sender-name",
+                "contact@openim", "v1.0", "open-wrapper-token", "");
+        f.fire(wrapped, amount(50).put("sendId", "open-wrapper"));
+        equal(1, f.notices.size(), "wrapped open callback still settles the packet");
+        check(original != wrapped, "fallback test uses a different open callback object");
     }
 
     private static void synchronousCallbacks() throws Throwable {
@@ -385,10 +479,10 @@ public final class SilentHandlerRegression {
 
     private static void disabledAndIncomplete() throws Throwable {
         Fixture f = new Fixture();
-        f.settings.silentEnabled = false;
+        f.settings.grabMode = 0;
         f.handler.tryReceive("", "room@chatroom", url("disabled", false));
         equal(0, f.network.attempts.size(), "disabled mode sends no requests");
-        f.settings.silentEnabled = true;
+        f.settings.grabMode = 1;
         ReceiveRequest request = f.start("waiting");
         f.fire(request, null);
         f.fire(request, new JSONObject().put("sendId", "waiting"));
@@ -396,6 +490,76 @@ public final class SilentHandlerRegression {
         check(f.state.silentReceivingSet.contains("waiting"), "incomplete response stays pending");
         f.fire(request, timing("present"));
         equal(1, f.opens("waiting").size(), "complete response can still open the packet");
+    }
+
+    private static void silentRuleOverridesGlobalUi() throws Throwable {
+        Fixture f = new Fixture();
+        String nativeUrl = url("chat-silent", false);
+        f.settings.grabMode = 0;
+        f.state.ruleMap.put(nativeUrl, new RedPacketEffectiveRule(true, 1));
+        ReceiveRequest receive = f.start("chat-silent");
+        f.tasks.advanceBy(5400);
+        equal(2, f.receives("chat-silent").size(), "receive timeout retry uses the chat rule, not global UI mode");
+        receive = f.receives("chat-silent").get(1);
+        f.fire(receive, timing("chat-token"));
+        OpenRequest open = f.open("chat-silent");
+        f.tasks.advanceBy(5700);
+        equal(2, f.opens("chat-silent").size(), "open retry remains owned by this silent task");
+        f.fire(open, amount(125));
+        equal(1, f.notices.size(), "global UI mode cannot discard a chat silent open callback");
+        equal(List.of(nativeUrl), f.stats, "chat silent result increments its own statistics");
+        f.tasks.advanceBy(20000);
+        equal(0, f.failed.size(), "chat silent result does not falsely time out");
+    }
+
+    private static void nonSilentRules() throws Throwable {
+        for (RedPacketEffectiveRule rule : List.of(new RedPacketEffectiveRule(true, 0),
+                new RedPacketEffectiveRule(false, 1))) {
+            Fixture f = new Fixture();
+            String nativeUrl = url("not-silent", false);
+            f.state.ruleMap.put(nativeUrl, rule);
+            f.handler.tryReceive("", "room@chatroom", nativeUrl);
+            equal(0, f.network.attempts.size(), "global silent mode cannot override a UI or disabled chat rule");
+        }
+    }
+
+    private static void totalSwitch() throws Throwable {
+        Fixture entry = new Fixture();
+        entry.settings.enabled = false;
+        entry.state.ruleMap.put(url("off", false), new RedPacketEffectiveRule(true, 1));
+        entry.handler.tryReceive("", "room@chatroom", url("off", false));
+        equal(0, entry.network.attempts.size(), "chat rule cannot bypass total switch at entry");
+
+        Fixture receiving = new Fixture();
+        ReceiveRequest receive = receiving.start("off-receive");
+        receiving.settings.enabled = false;
+        receiving.fire(receive, timing("token"));
+        equal(0, receiving.opens("off-receive").size(), "receive callback cannot send open with total switch off");
+        receiving.tasks.advanceBy(20000);
+        equal(1, receiving.receives("off-receive").size(), "receive retry cannot send with total switch off");
+
+        Fixture opening = new Fixture();
+        opening.fire(opening.start("off-open"), timing("token"));
+        OpenRequest open = opening.open("off-open");
+        opening.tasks.advanceBy(4500);
+        opening.settings.enabled = false;
+        opening.fire(open, amount(100));
+        equal(0, opening.notices.size(), "open callback cannot notify with total switch off");
+        opening.tasks.advanceBy(20000);
+        equal(1, opening.opens("off-open").size(), "queued open retry cannot bypass total switch");
+        equal(0, opening.failed.size(), "disabled automatic task cannot emit timeout failure");
+        check(!opening.state.silentRedPacketMap.containsKey("off-open"), "disabled retry releases pending ownership");
+    }
+
+    private static void pendingModeChange() throws Throwable {
+        Fixture f = new Fixture();
+        ReceiveRequest receive = f.start("mode-change");
+        f.settings.grabMode = 0;
+        f.fire(receive, timing("owned-token"));
+        f.fire(f.open("mode-change"), amount(25));
+        equal(1, f.notices.size(), "owned callbacks use task mode rather than newly selected global mode");
+        f.fire(new ReceiveRequest("mode-change"), timing("foreign"));
+        equal(1, f.opens("mode-change").size(), "global UI mode does not widen callback ownership");
     }
 
     private static final class Fixture {
@@ -440,6 +604,16 @@ public final class SilentHandlerRegression {
         ReceiveRequest start(String id, String talker, boolean union) {
             handler.tryReceive("<headimgurl>head-image</headimgurl><sendertitle>sender-name</sendertitle>",
                     talker, url(id, union));
+            List<ReceiveRequest> requests = receives(id);
+            check(!requests.isEmpty(), "real handler created receive request for " + id);
+            return requests.get(requests.size() - 1);
+        }
+        ReceiveRequest startWithUrl(String id, String talker, String nativeUrl) {
+            return startWithUrlAndContent(id, talker, nativeUrl,
+                    "<headimgurl>head-image</headimgurl><sendertitle>sender-name</sendertitle>");
+        }
+        ReceiveRequest startWithUrlAndContent(String id, String talker, String nativeUrl, String content) {
+            handler.tryReceive(content, talker, nativeUrl);
             List<ReceiveRequest> requests = receives(id);
             check(!requests.isEmpty(), "real handler created receive request for " + id);
             return requests.get(requests.size() - 1);
@@ -502,6 +676,9 @@ public final class SilentHandlerRegression {
         }
         @Override public void onGYNetEnd(int error, String message, JSONObject json) {}
     }
+    public static final class BrokenUnionOpenRequest {
+        public BrokenUnionOpenRequest() {}
+    }
     public static final class GatedJson extends JSONObject {
         private final CyclicBarrier callbacks = new CyclicBarrier(2);
         volatile boolean barrierFailed;
@@ -518,6 +695,10 @@ public final class SilentHandlerRegression {
     private static String url(String id, boolean union) {
         return "wxpay://c2cbizmessagehandler/hongbao/receivehongbao?sendid=" + id
                 + "&msgtype=1&channelid=2" + (union ? "&sceneid=1005" : "");
+    }
+    private static String urlWithScene(String id, String scene) {
+        return "wxpay://c2cbizmessagehandler/hongbao/receivehongbao?sendid=" + id
+                + "&msgtype=1&channelid=2&sceneid=" + scene;
     }
     private static JSONObject timing(String token) { return new JSONObject().put("timingIdentifier", token); }
     private static JSONObject amount(int fen) { return new JSONObject().put("amount", fen); }

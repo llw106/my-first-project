@@ -27,6 +27,8 @@ import java.util.Date
 import java.util.LinkedHashSet
 import java.util.Locale
 import java.util.Properties
+import java.util.Collections
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
@@ -45,8 +47,25 @@ class ScriptPluginBridge internal constructor(
     val apis: Class<WeChatApis> = WeChatApis::class.java
     private val pluginHooks = ConcurrentHashMap<String, CopyOnWriteArrayList<XC_MethodHook.Unhook>>()
     private val pluginFloatingBars = ConcurrentHashMap<String, CopyOnWriteArrayList<ScriptFloatingGlassBarHandle>>()
+    private val pluginDialogCallbacks = ConcurrentHashMap<String, MutableSet<DialogCallbackGate<*>>>()
     private val configLock = Any()
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    private class DialogCallbackGate<T>(callback: Consumer<T>?) : Consumer<T> {
+        private val current = AtomicReference(callback)
+        override fun accept(value: T) {
+            current.getAndSet(null)?.let {
+                runCatching { it.accept(value) }
+                    .onFailure { error ->
+                        h.Hchat.utils.HLog.e("[Hchat:Script] 对话框回调失败: ${error.message}", error)
+                    }
+            }
+        }
+
+        fun clear() {
+            current.set(null)
+        }
+    }
 
     fun log(message: Any?) {
         XposedBridge.log("[Hchat:Script] ${message ?: "null"}")
@@ -94,6 +113,18 @@ class ScriptPluginBridge internal constructor(
         return showModuleConfirmDialog(title, message, null, callback)
     }
 
+    fun showModuleConfirmDialogForPlugin(
+        pluginId: String?, title: String?, message: String?, callback: Consumer<Boolean>?
+    ): Boolean = showModuleConfirmDialog(
+        title, message, null, trackDialogCallback(pluginId, callback)
+    )
+
+    fun showModuleConfirmDialogForPlugin(
+        pluginId: String?, title: String?, message: String?, position: String?, callback: Consumer<Boolean>?
+    ): Boolean = showModuleConfirmDialog(
+        title, message, position, trackDialogCallback(pluginId, callback)
+    )
+
     fun showModuleConfirmDialog(
         title: String?,
         message: String?,
@@ -106,7 +137,7 @@ class ScriptPluginBridge internal constructor(
                 title = title.orEmpty(),
                 message = message.orEmpty(),
                 onResult = { dispatchDialogCallback(callback, it) },
-                onDismiss = {},
+                onDismiss = { clearDialogCallback(callback) },
                 position = VoiceForwardMiuixDialog.DialogPosition.from(position)
             )
         }
@@ -121,6 +152,20 @@ class ScriptPluginBridge internal constructor(
     ): Boolean {
         return showModuleInputDialog(title, summary, initialValue, placeholder, null, callback)
     }
+
+    fun showModuleInputDialogForPlugin(
+        pluginId: String?, title: String?, summary: String?, initialValue: String?,
+        placeholder: String?, callback: Consumer<String>?
+    ): Boolean = showModuleInputDialog(
+        title, summary, initialValue, placeholder, null, trackDialogCallback(pluginId, callback)
+    )
+
+    fun showModuleInputDialogForPlugin(
+        pluginId: String?, title: String?, summary: String?, initialValue: String?,
+        placeholder: String?, position: String?, callback: Consumer<String>?
+    ): Boolean = showModuleInputDialog(
+        title, summary, initialValue, placeholder, position, trackDialogCallback(pluginId, callback)
+    )
 
     fun showModuleInputDialog(
         title: String?,
@@ -140,7 +185,7 @@ class ScriptPluginBridge internal constructor(
                 maxLength = 4_000,
                 allowEmpty = true,
                 onConfirm = { dispatchDialogCallback(callback, it) },
-                onDismiss = {},
+                onDismiss = { clearDialogCallback(callback) },
                 position = VoiceForwardMiuixDialog.DialogPosition.from(position)
             )
         }
@@ -155,6 +200,19 @@ class ScriptPluginBridge internal constructor(
         return showModuleChoiceDialog(title, summary, choices, null, callback)
     }
 
+    fun showModuleChoiceDialogForPlugin(
+        pluginId: String?, title: String?, summary: String?, choices: List<*>?, callback: Consumer<Int>?
+    ): Boolean = showModuleChoiceDialog(
+        title, summary, choices, null, trackDialogCallback(pluginId, callback)
+    )
+
+    fun showModuleChoiceDialogForPlugin(
+        pluginId: String?, title: String?, summary: String?, choices: List<*>?, position: String?,
+        callback: Consumer<Int>?
+    ): Boolean = showModuleChoiceDialog(
+        title, summary, choices, position, trackDialogCallback(pluginId, callback)
+    )
+
     fun showModuleChoiceDialog(
         title: String?,
         summary: String?,
@@ -163,7 +221,10 @@ class ScriptPluginBridge internal constructor(
         callback: Consumer<Int>?
     ): Boolean {
         val items = choices.orEmpty().map { it?.toString().orEmpty() }
-        if (items.isEmpty()) return false
+        if (items.isEmpty()) {
+            clearDialogCallback(callback)
+            return false
+        }
         return showOnMain { activity ->
             VoiceForwardMiuixDialog.showChoices(
                 activity = activity,
@@ -171,7 +232,7 @@ class ScriptPluginBridge internal constructor(
                 summary = summary.orEmpty(),
                 choices = items.map { it to "" },
                 onSelected = { dispatchDialogCallback(callback, it) },
-                onDismiss = {},
+                onDismiss = { clearDialogCallback(callback) },
                 position = VoiceForwardMiuixDialog.DialogPosition.from(position)
             )
         }
@@ -187,6 +248,20 @@ class ScriptPluginBridge internal constructor(
         return showModuleMultiChoiceDialog(title, summary, choices, initialSelected, null, callback)
     }
 
+    fun showModuleMultiChoiceDialogForPlugin(
+        pluginId: String?, title: String?, summary: String?, choices: List<*>?, initialSelected: Set<*>?,
+        callback: Consumer<Set<Int>>?
+    ): Boolean = showModuleMultiChoiceDialog(
+        title, summary, choices, initialSelected, null, trackDialogCallback(pluginId, callback)
+    )
+
+    fun showModuleMultiChoiceDialogForPlugin(
+        pluginId: String?, title: String?, summary: String?, choices: List<*>?, initialSelected: Set<*>?,
+        position: String?, callback: Consumer<Set<Int>>?
+    ): Boolean = showModuleMultiChoiceDialog(
+        title, summary, choices, initialSelected, position, trackDialogCallback(pluginId, callback)
+    )
+
     fun showModuleMultiChoiceDialog(
         title: String?,
         summary: String?,
@@ -196,7 +271,10 @@ class ScriptPluginBridge internal constructor(
         callback: Consumer<Set<Int>>?
     ): Boolean {
         val items = choices.orEmpty().map { it?.toString().orEmpty() }
-        if (items.isEmpty()) return false
+        if (items.isEmpty()) {
+            clearDialogCallback(callback)
+            return false
+        }
         val selected = initialSelected.orEmpty()
             .mapNotNull { (it as? Number)?.toInt() }
             .filter { it in items.indices }
@@ -210,7 +288,7 @@ class ScriptPluginBridge internal constructor(
                 initialSelected = selected,
                 allowEmpty = true,
                 onConfirm = { dispatchDialogCallback(callback, it) },
-                onDismiss = {},
+                onDismiss = { clearDialogCallback(callback) },
                 position = VoiceForwardMiuixDialog.DialogPosition.from(position)
             )
         }
@@ -520,6 +598,9 @@ class ScriptPluginBridge internal constructor(
 
     fun unhookPlugin(pluginId: String?) {
         if (pluginId.isNullOrBlank()) return
+        pluginDialogCallbacks.remove(pluginId)?.let { callbacks ->
+            synchronized(callbacks) { callbacks.forEach { it.clear() } }
+        }
         runCatching { ScriptMenuDispatcher.unregisterOwner(pluginId) }.onFailure {
             h.Hchat.utils.HLog.e("[Hchat:Script] 清理插件菜单失败: $pluginId", it)
         }
@@ -780,6 +861,22 @@ class ScriptPluginBridge internal constructor(
         runCatching { callback?.accept(value) }.onFailure {
             h.Hchat.utils.HLog.e("[Hchat:Script] 模块弹窗回调失败: ${it.message}", it)
         }
+    }
+
+    private fun clearDialogCallback(callback: Consumer<*>?) {
+        (callback as? DialogCallbackGate<*>)?.clear()
+    }
+
+    private fun <T> trackDialogCallback(pluginId: String?, callback: Consumer<T>?): Consumer<T>? {
+        if (callback == null) return null
+        val cleanId = pluginId?.takeIf { it.isNotBlank() } ?: return callback
+        val gate = DialogCallbackGate(callback)
+        pluginDialogCallbacks.compute(cleanId) { _, old ->
+            (old ?: Collections.synchronizedSet(
+                Collections.newSetFromMap(WeakHashMap<DialogCallbackGate<*>, Boolean>())
+            )).apply { add(gate) }
+        }
+        return gate
     }
 
     companion object {

@@ -489,16 +489,26 @@ Hook 回调在 BeanShell 中使用 `Consumer.accept(Object param)` / `Function.a
 这些是 Agent 管理插件文件的工具，不是插件全局函数。插件目录的读取、搜索、新建、修改、移动和删除都通过 `hchat.workspace.*` 完成，并在聊天中保留工具名称、参数、状态和结果：
 
 - `list_files` / `read_file` / `search_files`：检查目录、按行号分段读取文本，以及用正则、路径 glob 和前后文搜索内容。
+- `runtime_diagnostics`：传准确 `plugin_id`，读取已安装插件在当前进程的加载状态及其 `log.txt`；不创建暂存区、不执行或启用插件。默认返回最近 120 行，最多 500 行且每页不超过 64 KiB；使用 `nextBeforeOffset` 作为下一次 `before_offset` 向前续读。日志缺失、读取失败、未加载和配置关闭分别返回明确状态。日志只覆盖插件主动输出和加载失败，不含只写到模块 HLog 的普通回调异常；旧日志不能证明当前暂存代码已经运行。
 - `create_directory` / `write_file`：创建目录或文本文件；已有文件的局部修改优先使用 `apply_patch`。
 - `apply_patch`：使用以 `*** Begin Patch` / `*** End Patch` 包裹的 Codex 风格统一补丁；支持 `*** Add File`、`*** Update File`、`*** Delete File`、`*** Move to` 和 `@@` 区块，一次可处理多个文件。补丁上下文不包含读取结果中的行号。
 - `move_path` / `delete_path`：移动、重命名或删除插件内路径。
 - `restore_path`：把路径恢复到本轮开始时的状态，新建路径会被移除。
 - `reset_workspace`：丢弃本轮全部暂存修改，恢复到任务开始状态。
 - `delete_plugin`：只在用户明确要求时标记删除整个现有插件，提交前一定要求用户确认。
-- `workspace_status`：汇总新增、修改、删除和静态检查；必须在最后一次写操作后调用。
+- `workspace_status`：汇总新增、修改、删除、文件检查及真正的 BeanShell 语法检查；必须在最后一次写操作后调用。根 `main.java` 和所有附属 `.java/.bsh` 使用与运行时同序的预处理器和 Parser，只解析、不执行。错误返回文件路径、可确认的位置和解析片段；预处理改变行号时明确标注。`canApply=true` 只表示允许提交，`runtimeVerified=false` 表示未验证实际运行行为。
 - `show_diff`：返回标准统一 diff；完成前必须使用 `path="."` 查看当前 revision 的完整差异，结果过长时再按子路径分段查看。
 
 所有工具只操作当前单个插件的暂存副本。新插件、删除路径、删除整个插件或静态检查识别出的高风险代码必须由用户确认；其它现有插件修改通过目录事务提交。提交后插件保持禁用。Agent 不得用最终回复里的整段源码绕过工作区工具。
+
+## Agent Skills
+
+用户可在 Agent 配置页或聊天快捷设置的 `Skill 管理` 新建、编辑、启停和导入技能；聊天 `$技能名` 指定技能，也可按描述选择。技能不是普通已安装脚本插件，不应对它调用插件工作区写入、加载或启用 API。
+
+- `hchat.skills.list`：列出安装的技能，包含准确 ID、名称、描述、启用状态和文档错误；`offset` 默认 0，`limit` 默认 20、最大 50，按 `nextOffset` 翻页。
+- `hchat.skills.read`：`skill_id` 必填，`path` 默认 `SKILL.md`，可读取技能目录内的 UTF-8 文本；`offset` 默认 0，`max_chars` 默认 12000、最大 24000，按 `nextOffset` 续读。停用技能不能读取。
+- 先名称描述、后按需正文和引用文件。指南可约束当前任务步骤，但不能覆盖用户要求或授予额外权限。`scripts` 只提供文本参考，不会自动执行，不存在通用终端、Python 或任意系统命令执行工具。
+- 两工具均可使用原生函数协议，兼容接口用 `status=local_tool`、完整 `localToolName` 和 JSON `localToolArguments`。这些工具不是 BeanShell 可调用的方法。
 
 ## Agent 内置逆向工具
 

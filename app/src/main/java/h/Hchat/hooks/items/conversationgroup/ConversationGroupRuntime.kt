@@ -22,6 +22,9 @@ import android.widget.Toast
 import de.robv.android.xposed.XC_MethodHook
 import h.Hchat.dexkit.DexMethodCache
 import h.Hchat.hooks.api.core.WeChatApis
+import h.Hchat.hooks.api.conversation.WeChatConversationChangeApi
+import h.Hchat.hooks.api.contact.WeChatChatroomChangeApi
+import h.Hchat.hooks.api.contact.WeChatContactChangeApi
 import h.Hchat.hooks.core.ConversationMenuExtensionRegistry
 import h.Hchat.hooks.core.ConversationMenuExtensionTarget
 import h.Hchat.hooks.core.FeatureContext
@@ -34,10 +37,12 @@ import org.json.JSONObject
 import org.luckypray.dexkit.query.FindMethod
 import org.luckypray.dexkit.query.enums.StringMatchType
 import org.luckypray.dexkit.query.matchers.MethodMatcher
+import java.lang.ref.WeakReference
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.security.MessageDigest
 import java.util.Collections
+import java.util.LinkedHashMap
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -97,6 +102,8 @@ object ConversationGroupRuntime {
     private const val CHILD_MENU_PIN_ID = 0x48434762
     private const val CHILD_MENU_BOTTOM_ID = 0x48434764
     private const val CONVERSATION_TOP_FLAG = 1L shl 62
+    private const val PARENT_FAILURE_HISTORY_MAX = 4096
+    private const val PARENT_FAILURE_HISTORY_TTL_MS = 24 * 60 * 60 * 1000L
 
     private val initialized = AtomicBoolean(false)
     private val syncScheduled = AtomicBoolean(false)
@@ -110,7 +117,7 @@ object ConversationGroupRuntime {
     )
     private val nativeGroupAdapterParents = Collections.synchronizedMap(WeakHashMap<Any, String>())
     private val nativeGroupLongClickListeners = Collections.synchronizedMap(
-        WeakHashMap<AdapterView<*>, AdapterView.OnItemLongClickListener?>()
+        WeakHashMap<AdapterView<*>, WeakReference<NativeGroupLongClickBinding>>()
     )
     private val nativeGroupQueryParent = ThreadLocal<String>()
     private val nativeGroupPageParent = ThreadLocal<String>()
@@ -123,15 +130,33 @@ object ConversationGroupRuntime {
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "Hchat-ConversationGroup").apply { isDaemon = true }
     }
-    private val parentRestoreFailures = ConcurrentHashMap.newKeySet<String>()
+    private val lifecycleLock = Any()
+    private val installGeneration = AtomicLong()
+    private val parentRestoreFailures = LinkedHashMap<String, Long>(128, 0.75f, true)
     private val main = Handler(Looper.getMainLooper())
+    private val lifecycleGeneration = AtomicLong()
+    @Volatile private var runtimeActive = false
     @Volatile private var preferenceListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+    @Volatile private var conversationSubscription: WeChatConversationChangeApi.Subscription? = null
+    @Volatile private var contactSubscription: WeChatContactChangeApi.Subscription? = null
+    @Volatile private var chatroomSubscription: WeChatChatroomChangeApi.Subscription? = null
     @Volatile private var parentUpdateMethod: Method? = null
     @Volatile private var nativeGroupRefreshMethod: Method? = null
     @Volatile private var conversationStorage: Any? = null
 
     @JvmStatic
-    fun install(context: FeatureContext): Boolean {
+    fun beginInstall(): Long = installGeneration.incrementAndGet()
+
+    @JvmStatic
+    fun isInstallGenerationActive(generation: Long): Boolean =
+        installGeneration.get() == generation
+
+    @JvmStatic
+    fun install(context: FeatureContext, generation: Long): Boolean = synchronized(lifecycleLock) {
+        if (!isInstallGenerationActive(generation)) true else installInternal(context)
+    }
+
+    private fun installInternal(context: FeatureContext): Boolean {
         val query = locateQueryMethod(context) ?: return false
         val shareRecentAdapterReset = locateShareRecentAdapterResetMethod(context) ?: return false
         val shareRecentForwardQuery = locateShareRecentForwardQueryMethod(context) ?: return false
@@ -151,11 +176,18 @@ object ConversationGroupRuntime {
         } ?: return false
         parentUpdateMethod = parentUpdate
         nativeGroupRefreshMethod = nativeGroupRefresh
+        val homeProjectionInstalled = ConversationGroupHomeProjection.install(context) {
+            effectiveConversationSnapshot?.hiddenHomeIds.orEmpty()
+        }
+        if (!homeProjectionInstalled) {
+            HLog.e("$TAG 首页公众号投影 Hook 安装失败，保留原生首页")
+        }
         initializeRuntime(context)
+        val generation = lifecycleGeneration.get()
         val queryInstalled = hook(query, object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (isExpandingShareRecentQuery()) return
-                captureConversationStorage(param.thisObject, parentUpdate, context.hostContext())
+                captureConversationStorage(param.thisObject, parentUpdate, context.hostContext(), generation)
                 if (!ConversationGroupStore.isEnabled(context.hostContext())) return
                 val cursor = param.result as? Cursor ?: return
                 if (isShareRecentQuery()) {
@@ -295,7 +327,7 @@ object ConversationGroupRuntime {
                 addConversationGroupMenuItem(param)
             }
         })
-        return queryInstalled && shareRecentAdapterInstalled &&
+        return homeProjectionInstalled && queryInstalled && shareRecentAdapterInstalled &&
             shareRecentForwardQueryInstalled && clickInstalled &&
             nativeGroupQueryInstalled && nativeGroupClickInstalled && nativeGroupRefreshInstalled &&
             nativeGroupMarkReadInstalled && nativeSetPinnedInstalled && nativeUnsetPinnedInstalled &&
@@ -305,20 +337,73 @@ object ConversationGroupRuntime {
 
     @JvmStatic
     fun syncAsync(context: Context) {
-        syncRequested.set(true)
-        if (!syncScheduled.compareAndSet(false, true)) return
+        val appContext = context.applicationContext
+        val generation = synchronized(lifecycleLock) {
+            if (!runtimeActive) return
+            syncRequested.set(true)
+            if (!syncScheduled.compareAndSet(false, true)) return
+            lifecycleGeneration.get()
+        }
         executor.execute {
             try {
                 do {
-                    syncRequested.set(false)
-                    runCatching { syncDatabase(context.applicationContext) }
+                    synchronized(lifecycleLock) {
+                        if (!isRuntimeGenerationActive(generation)) return@execute
+                        syncRequested.set(false)
+                    }
+                    runCatching { syncDatabase(appContext, generation) }
                         .onFailure { HLog.e("$TAG 同步聊天分组失败: ${it.message}", it) }
-                } while (syncRequested.get())
+                } while (runtimeActive && generation == lifecycleGeneration.get() && syncRequested.get())
             } finally {
                 syncScheduled.set(false)
-                if (syncRequested.get()) syncAsync(context)
+                if (runtimeActive && syncRequested.get()) {
+                    syncAsync(appContext)
+                }
             }
         }
+    }
+
+    @JvmStatic
+    fun destroy(context: FeatureContext) = synchronized(lifecycleLock) {
+        installGeneration.incrementAndGet()
+        runtimeActive = false
+        lifecycleGeneration.incrementAndGet()
+        preferenceListener?.let {
+            runCatching {
+                HchatStorage.preferences(context.hostContext(), ConversationGroupStore.PREFS_NAME)
+                    .unregisterOnSharedPreferenceChangeListener(it)
+            }
+        }
+        preferenceListener = null
+        conversationSubscription?.unsubscribe()
+        contactSubscription?.unsubscribe()
+        chatroomSubscription?.unsubscribe()
+        conversationSubscription = null
+        contactSubscription = null
+        chatroomSubscription = null
+        initialized.set(false)
+        syncRequested.set(false)
+        effectiveConversationSnapshot = null
+        automaticAvatarSources.clear()
+        synchronized(parentRestoreFailures) { parentRestoreFailures.clear() }
+        conversationStorage = null
+        parentUpdateMethod = null
+        nativeGroupRefreshMethod = null
+        hookedMethods.clear()
+        synchronized(menuBindings) { menuBindings.clear() }
+        synchronized(nativeGroupMenuBindings) { nativeGroupMenuBindings.clear() }
+        synchronized(nativeGroupAdapterParents) { nativeGroupAdapterParents.clear() }
+        nativeGroupQueryParent.remove()
+        nativeGroupPageParent.remove()
+        nativeGroupLongClickTarget.remove()
+        shareRecentQueryDepth.remove()
+        expandingShareRecentQuery.remove()
+        main.removeCallbacksAndMessages(null)
+        clearNativeGroupLongClickListeners()
+        ConversationGroupQuickDialog.closeAll()
+        ConversationGroupQuickDialog.cancelPendingDocuments()
+        ConversationGroupSendPicker.cancelAll()
+        ConversationGroupTask.cancelAll()
     }
 
     @JvmStatic
@@ -348,18 +433,26 @@ object ConversationGroupRuntime {
 
     private fun initializeRuntime(context: FeatureContext) {
         if (!initialized.compareAndSet(false, true)) return
+        runtimeActive = true
+        lifecycleGeneration.incrementAndGet()
+        val generation = lifecycleGeneration.get()
         val prefs = HchatStorage.preferences(context.hostContext(), ConversationGroupStore.PREFS_NAME)
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key == ConversationGroupStore.KEY_ENABLE || key == ConversationGroupStore.KEY_DATA) {
+            if (runtimeActive && generation == lifecycleGeneration.get() &&
+                (key == ConversationGroupStore.KEY_ENABLE || key == ConversationGroupStore.KEY_DATA)
+            ) {
                 syncAsync(context.hostContext())
             }
         }
         preferenceListener = listener
         prefs.registerOnSharedPreferenceChangeListener(listener)
-        WeChatApis.conversationChanges()?.subscribe { change ->
+        conversationSubscription = WeChatApis.conversationChanges()?.subscribe { change ->
+            if (!runtimeActive || generation != lifecycleGeneration.get()) return@subscribe
             val groups = ConversationGroupStore.load(context.hostContext())
             val affectedTalkers = change?.affectedUsernames()?.toList().orEmpty()
                 .filterNot(::isVirtualTalker)
+            val hiddenNativeHome = effectiveConversationSnapshot?.hiddenHomeIds.orEmpty()
+                .any { it in ConversationGroupHomeVisibility.nativeParents }
             val parentOnlyUpdate = change?.databaseChange?.values?.let { values ->
                 values.containsKey("parentRef") && values.keySet().all {
                     it == "parentRef" || it == "username"
@@ -369,12 +462,12 @@ object ConversationGroupRuntime {
                 (groups.any { it.automaticGroupingEnabled } || affectedTalkers.any { talker ->
                     talker.isNotBlank() &&
                         ConversationGroupStore.conversationOwner(groups, talker) != null
-                })
-            ) {
+                } || hiddenNativeHome && affectedTalkers.any { it.startsWith("gh_") })) {
                 syncAsync(context.hostContext())
             }
         }
-        WeChatApis.contactChanges()?.subscribe { change ->
+        contactSubscription = WeChatApis.contactChanges()?.subscribe { change ->
+            if (!runtimeActive || generation != lifecycleGeneration.get()) return@subscribe
             val groups = ConversationGroupStore.load(context.hostContext())
             val databaseChange = change?.databaseChange
             val talker = change?.wxId().orEmpty().ifBlank {
@@ -390,7 +483,8 @@ object ConversationGroupRuntime {
                 syncAsync(context.hostContext())
             }
         }
-        WeChatApis.chatroomChanges()?.subscribe {
+        chatroomSubscription = WeChatApis.chatroomChanges()?.subscribe {
+            if (!runtimeActive || generation != lifecycleGeneration.get()) return@subscribe
             val groups = ConversationGroupStore.load(context.hostContext())
             if (groups.any {
                     it.automaticGroupingEnabled ||
@@ -504,11 +598,12 @@ object ConversationGroupRuntime {
                 val target = menuBindings.remove(item) ?: return
                 param.result = null
                 main.post {
-                    if (!target.activity.isFinishing && !target.activity.isDestroyed) {
+                    val activity = target.activity.get() ?: return@post
+                    if (!activity.isFinishing && !activity.isDestroyed) {
                         ConversationGroupQuickDialog.show(
-                            activity = target.activity,
+                            activity = activity,
                             talker = target.talker,
-                            onChanged = { syncAsync(target.activity) }
+                            onChanged = { syncAsync(activity) }
                         )
                     }
                 }
@@ -742,11 +837,13 @@ object ConversationGroupRuntime {
         context: Context,
         groupId: String
     ) {
-        val original = synchronized(nativeGroupLongClickListeners) {
-            if (nativeGroupLongClickListeners.containsKey(list)) return
-            list.onItemLongClickListener.also { nativeGroupLongClickListeners[list] = it }
-        }
-        list.onItemLongClickListener = AdapterView.OnItemLongClickListener { parent, view, position, id ->
+        val existing = nativeGroupLongClickListeners[list]?.get()
+        if (existing != null && list.onItemLongClickListener === existing) return
+        val original = list.onItemLongClickListener
+        val binding = NativeGroupLongClickBinding(original, AdapterView.OnItemLongClickListener { parent, view, position, id ->
+            if (!runtimeActive) {
+                return@OnItemLongClickListener original?.onItemLongClick(parent, view, position, id) ?: false
+            }
             val item = runCatching { parent.getItemAtPosition(position) }.getOrNull()
             val talker = item?.let(::conversationTalkerFromItem)
             if (!isVirtualTalker(talker)) {
@@ -775,14 +872,42 @@ object ConversationGroupRuntime {
                 }
             }
             true
+        })
+        list.onItemLongClickListener = binding
+        nativeGroupLongClickListeners[list] = WeakReference(binding)
+    }
+
+    private fun clearNativeGroupLongClickListeners() {
+        val bindings = synchronized(nativeGroupLongClickListeners) {
+            nativeGroupLongClickListeners.map { WeakReference(it.key) to it.value }
+                .also { nativeGroupLongClickListeners.clear() }
         }
+        val restore = {
+            bindings.forEach { (listRef, bindingRef) ->
+                val list = listRef.get()
+                val binding = bindingRef.get()
+                if (list != null && binding != null && list.onItemLongClickListener === binding) {
+                    list.onItemLongClickListener = binding.original
+                }
+            }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) restore() else main.post(restore)
+    }
+
+    private class NativeGroupLongClickBinding(
+        val original: AdapterView.OnItemLongClickListener?,
+        private val callback: AdapterView.OnItemLongClickListener
+    ) : AdapterView.OnItemLongClickListener {
+        override fun onItemLongClick(parent: AdapterView<*>, view: View, position: Int, id: Long): Boolean =
+            callback.onItemLongClick(parent, view, position, id)
     }
 
     private fun appendNativeGroupChildMenu(param: XC_MethodHook.MethodHookParam) {
         val target = nativeGroupLongClickTarget.get() ?: return
         if (target.talker.isBlank() || isVirtualTalker(target.talker)) return
         val menu = param.args?.getOrNull(0) as? ContextMenu ?: return
-        val group = ConversationGroupStore.load(target.activity)
+        val activity = target.activity.get() ?: return
+        val group = ConversationGroupStore.load(activity)
             .firstOrNull { it.id == target.groupId }
             ?: return
         menu.removeItem(CHILD_MENU_REMOVE_ID)
@@ -823,7 +948,7 @@ object ConversationGroupRuntime {
                 if (bottom) NativeGroupMenuAction.UNBOTTOM else NativeGroupMenuAction.BOTTOM
             )
         }
-        val extensionTarget = ConversationMenuExtensionTarget(target.activity, target.talker)
+        val extensionTarget = ConversationMenuExtensionTarget(activity, target.talker)
         ConversationMenuExtensionRegistry.visibleItems(extensionTarget).forEach { extension ->
             menu.removeItem(extension.itemId)
             val item = menu.add(0, extension.itemId, menu.size(), extension.title)
@@ -841,7 +966,8 @@ object ConversationGroupRuntime {
         param.result = null
         main.post {
             val target = binding.target
-            val activity = target.activity
+            val activity = target.activity.get() ?: return@post
+            val fragment = target.fragment.get() ?: return@post
             if (activity.isFinishing || activity.isDestroyed) return@post
             when (binding.action) {
                 NativeGroupMenuAction.REMOVE -> {
@@ -857,7 +983,7 @@ object ConversationGroupRuntime {
                     ).show()
                     if (success) {
                         syncAsync(activity)
-                        refreshNativeGroupFragment(target.fragment, activity)
+                        refreshNativeGroupFragment(fragment, activity)
                     }
                 }
                 NativeGroupMenuAction.MOVE -> ConversationGroupQuickDialog.show(
@@ -865,7 +991,7 @@ object ConversationGroupRuntime {
                     talker = target.talker,
                     onChanged = {
                         syncAsync(activity)
-                        refreshNativeGroupFragment(target.fragment, activity)
+                        refreshNativeGroupFragment(fragment, activity)
                     }
                 )
                 NativeGroupMenuAction.PIN,
@@ -886,7 +1012,7 @@ object ConversationGroupRuntime {
                         },
                         Toast.LENGTH_SHORT
                     ).show()
-                    if (success) refreshNativeGroupFragment(target.fragment, activity)
+                    if (success) refreshNativeGroupFragment(fragment, activity)
                 }
                 NativeGroupMenuAction.BOTTOM,
                 NativeGroupMenuAction.UNBOTTOM -> {
@@ -906,7 +1032,7 @@ object ConversationGroupRuntime {
                         },
                         Toast.LENGTH_SHORT
                     ).show()
-                    if (success) refreshNativeGroupFragment(target.fragment, activity)
+                    if (success) refreshNativeGroupFragment(fragment, activity)
                 }
                 NativeGroupMenuAction.EXTENSION -> {
                     binding.extensionItemId?.let { itemId ->
@@ -940,9 +1066,10 @@ object ConversationGroupRuntime {
     }
 
     private fun filterProjectedOfficialRows(context: Context, cursor: Cursor): Cursor {
+        if (ConversationGroupHomeProjection.hasTabFilterInQuery()) return cursor
         val snapshot = projectedOfficialSnapshot(context) ?: return cursor
         return runCatching {
-            ConversationGroupOfficialCursor.filter(cursor, snapshot.projectedOfficialIds)
+            ConversationGroupOfficialCursor.filter(cursor, snapshot.hiddenHomeIds)
         }.onFailure { HLog.e("$TAG 过滤首页公众号分组投影失败", it) }.getOrDefault(cursor)
     }
 
@@ -1440,6 +1567,36 @@ object ConversationGroupRuntime {
         return ConversationParents(parents, verifyFlags)
     }
 
+    /** Reads native homepage aggregate membership without changing any parentRef. */
+    private fun loadNativeHomeMembers(
+        database: h.Hchat.hooks.api.runtime.WeChatDatabaseApi
+    ): Map<String, Set<String>>? {
+        val nativeParents = ConversationGroupHomeVisibility.nativeParents.toList()
+        return runCatching {
+            val cursor = database.rawQuery(
+                "SELECT username,parentRef FROM rconversation WHERE parentRef IN (?,?,?)",
+                nativeParents.toTypedArray()
+            ) ?: throw IllegalStateException("读取原生公众号汇总成员失败")
+            try {
+                val username = cursor.getColumnIndexOrThrow("username")
+                val parent = cursor.getColumnIndexOrThrow("parentRef")
+                val result = linkedMapOf<String, MutableSet<String>>()
+                while (cursor.moveToNext()) {
+                    val talker = cursor.getString(username).orEmpty()
+                    val parentRef = cursor.getString(parent).orEmpty()
+                    if (talker.isNotBlank() && parentRef in ConversationGroupHomeVisibility.nativeParents) {
+                        result.getOrPut(parentRef) { linkedSetOf() }.add(talker)
+                    }
+                }
+                result.mapValues { it.value.toSet() }
+            } finally {
+                cursor.close()
+            }
+        }.onFailure {
+            HLog.e("$TAG 读取原生公众号汇总成员失败", it)
+        }.getOrNull()
+    }
+
     private fun applyParentPlan(
         database: h.Hchat.hooks.api.runtime.WeChatDatabaseApi,
         prefs: SharedPreferences,
@@ -1448,7 +1605,7 @@ object ConversationGroupRuntime {
     ): Set<String> {
         check(account == ConversationGroupStore.accountKey()) { "账号已切换，停止分组写入" }
         plan.unresolved.forEach { talker ->
-            if (parentRestoreFailures.add("$account|$talker")) {
+            if (rememberParentRestoreFailure("$account|$talker")) {
                 HLog.e("$TAG 缺少可信原始父级，保留当前会话归属: talker=$talker")
             }
         }
@@ -1466,7 +1623,27 @@ object ConversationGroupRuntime {
         return successful
     }
 
-    private fun syncDatabase(context: Context) {
+    private fun rememberParentRestoreFailure(key: String): Boolean {
+        val now = System.currentTimeMillis()
+        synchronized(parentRestoreFailures) {
+            val previous = parentRestoreFailures[key]
+            if (previous != null && now - previous < PARENT_FAILURE_HISTORY_TTL_MS) return false
+            parentRestoreFailures.remove(key)
+            parentRestoreFailures[key] = now
+            while (parentRestoreFailures.size > PARENT_FAILURE_HISTORY_MAX) {
+                parentRestoreFailures.entries.iterator().let { iterator ->
+                    if (iterator.hasNext()) {
+                        iterator.next()
+                        iterator.remove()
+                    }
+                }
+            }
+            return true
+        }
+    }
+
+    private fun syncDatabase(context: Context, generation: Long) {
+        if (!isRuntimeGenerationActive(generation)) return
         val account = ConversationGroupStore.accountKey()
         if (account.isBlank()) return
         val database = WeChatApis.database() ?: return
@@ -1475,7 +1652,11 @@ object ConversationGroupRuntime {
         var groups = ConversationGroupStore.load(context)
         val enabled = ConversationGroupStore.isEnabled(context)
         if (!enabled) {
-            effectiveConversationSnapshot = null
+            synchronized(lifecycleLock) {
+                if (!isRuntimeGenerationActive(generation)) return
+                effectiveConversationSnapshot = null
+            }
+            ConversationGroupHomeProjection.refresh()
             val state = loadConversationParents(database, emptySet())
             val official = state.officialIds(originals)
             val plan = ConversationGroupParentPolicy.plan(
@@ -1490,6 +1671,7 @@ object ConversationGroupRuntime {
         val automaticResolution = if (enabled) {
             ConversationGroupAutomaticResolver.resolveForSync(context, groups)
         } else null
+        if (!isRuntimeGenerationActive(generation)) return
         val effectiveConversationIds = automaticResolution?.conversationIds
             ?: groups.associate { it.id to it.conversationIds }
         if (enabled && groups.any { it.conversationOrderIds.isNotEmpty() }) {
@@ -1507,7 +1689,8 @@ object ConversationGroupRuntime {
         } else {
             emptyList()
         }
-        val virtualRows = ensureVirtualRows(database, activeGroups)
+        if (!isRuntimeGenerationActive(generation)) return
+        val virtualRows = ensureVirtualRows(database, activeGroups, generation)
         val insertedGroupIds = virtualRows.readyGroupIds
         val groupById = groups.associateBy { it.id }
         val readyGroupIds = insertedGroupIds.filterTo(linkedSetOf()) { id ->
@@ -1543,22 +1726,36 @@ object ConversationGroupRuntime {
             protected = officialIds,
             originals = originals
         )
+        if (!isRuntimeGenerationActive(generation)) return
         val parentUpdatesSucceeded = applyParentPlan(database, prefs, account, plan)
         val successfullyProcessedNewGroups = automaticResolution?.newConversationGroupIds.orEmpty()
             .filterTo(linkedSetOf()) { talker ->
                 talker in assigned && talker !in plan.unresolved &&
                     (talker !in plan.updates || talker in parentUpdatesSucceeded)
             }
-        if (ConversationGroupStore.accountKey() != account) return
-        val previousSnapshot = effectiveConversationSnapshot
+        if (!isRuntimeGenerationActive(generation) || ConversationGroupStore.accountKey() != account) return
+        val projectedOfficialIds = officialIds.intersect(assigned.keys)
+        val nativeHomeMembers = if (projectedOfficialIds.isNotEmpty()) {
+            loadNativeHomeMembers(database)
+        } else {
+            emptyMap()
+        }
+        val hiddenHomeIds = if (nativeHomeMembers != null) {
+            ConversationGroupHomeVisibility.hidden(projectedOfficialIds, nativeHomeMembers)
+        } else {
+            // A failed native query must not hide an aggregate row as if it were empty.
+            projectedOfficialIds
+        }
         val nextSnapshot = EffectiveConversationSnapshot(
-            account, groups, effectiveConversationIds, officialIds.intersect(assigned.keys)
+            account, groups, effectiveConversationIds, projectedOfficialIds, hiddenHomeIds
         )
-        effectiveConversationSnapshot = nextSnapshot
-        val officialProjectionChanged = previousSnapshot == null || previousSnapshot.account != account ||
-            previousSnapshot.projectedOfficialIds != nextSnapshot.projectedOfficialIds ||
+        val previousSnapshot = publishConversationSnapshot(generation, nextSnapshot) ?: return
+        val oldSnapshot = previousSnapshot.value
+        val officialProjectionChanged = oldSnapshot == null || oldSnapshot.account != account ||
+            oldSnapshot.projectedOfficialIds != nextSnapshot.projectedOfficialIds ||
             (nextSnapshot.projectedOfficialIds.isNotEmpty() &&
-                previousSnapshot.conversationIds != nextSnapshot.conversationIds)
+                oldSnapshot.conversationIds != nextSnapshot.conversationIds)
+        val homeProjectionChanged = oldSnapshot?.hiddenHomeIds != nextSnapshot.hiddenHomeIds
         notifyVirtualGroupRows(
             database,
             activeGroups.filter {
@@ -1566,6 +1763,9 @@ object ConversationGroupRuntime {
                     (officialProjectionChanged || it.first.id in virtualRows.changedGroupIds)
             }
         )
+        if (officialProjectionChanged || homeProjectionChanged) {
+            ConversationGroupHomeProjection.refresh()
+        }
         // Never remove a parent row while a real conversation still needs recovery.
         if (plan.unresolved.isEmpty() && parentUpdatesSucceeded.containsAll(plan.updates.keys)) {
             cleanupVirtualRows(
@@ -1575,7 +1775,7 @@ object ConversationGroupRuntime {
                     .toSet()
             )
         }
-        val refreshParents = listOfNotNull(previousSnapshot?.takeIf { it.account == account }, nextSnapshot)
+        val refreshParents = listOfNotNull(oldSnapshot?.takeIf { it.account == account }, nextSnapshot)
             .flatMap { snapshot ->
                 snapshot.groups.filter { group ->
                     snapshot.conversationIds[group.id].orEmpty().any { it in snapshot.projectedOfficialIds }
@@ -1600,15 +1800,40 @@ object ConversationGroupRuntime {
             }
     }
 
+    private fun isRuntimeGenerationActive(generation: Long): Boolean =
+        runtimeActive && lifecycleGeneration.get() == generation
+
+    private data class PreviousSnapshot(val value: EffectiveConversationSnapshot?)
+
+    private fun publishConversationSnapshot(
+        generation: Long,
+        snapshot: EffectiveConversationSnapshot
+    ): PreviousSnapshot? = synchronized(lifecycleLock) {
+        if (!isRuntimeGenerationActive(generation)) return@synchronized null
+        PreviousSnapshot(effectiveConversationSnapshot).also { effectiveConversationSnapshot = snapshot }
+    }
+
+    private fun updateAutomaticAvatar(generation: Long, talker: String, source: String?): Boolean =
+        synchronized(lifecycleLock) {
+            if (!isRuntimeGenerationActive(generation)) return@synchronized false
+            if (source == null) automaticAvatarSources.remove(talker) else automaticAvatarSources[talker] = source
+            true
+        }
+
     private fun ensureVirtualRows(
         database: h.Hchat.hooks.api.runtime.WeChatDatabaseApi,
-        groups: List<Pair<ConversationGroup, GroupSnapshot>>
+        groups: List<Pair<ConversationGroup, GroupSnapshot>>,
+        generation: Long
     ): VirtualRowsResult {
         val ready = linkedSetOf<String>()
         val changed = linkedSetOf<String>()
         val currentTalkers = groups.mapTo(hashSetOf()) { virtualTalker(it.first.id) }
-        (automaticAvatarSources.keys - currentTalkers).forEach(automaticAvatarSources::remove)
+        synchronized(lifecycleLock) {
+            if (!isRuntimeGenerationActive(generation)) return VirtualRowsResult(ready, changed)
+            (automaticAvatarSources.keys - currentTalkers).forEach(automaticAvatarSources::remove)
+        }
         groups.forEach { (group, state) ->
+            if (!isRuntimeGenerationActive(generation)) return VirtualRowsResult(ready, changed)
             val talker = virtualTalker(group.id)
             var groupChanged = false
             val contactValues = ContentValues().apply {
@@ -1620,7 +1845,7 @@ object ConversationGroupRuntime {
             }
             val contactResult = upsertRow(database, "rcontact", talker, contactValues)
             if (!contactResult.success) {
-                automaticAvatarSources.remove(talker)
+                updateAutomaticAvatar(generation, talker, null)
                 return@forEach
             }
             groupChanged = contactResult.changed
@@ -1631,10 +1856,8 @@ object ConversationGroupRuntime {
                 ?.username
                 ?.takeIf(String::isNotBlank)
             val previousAvatarSource = automaticAvatarSources[talker]
-            if (automaticAvatarSource != null) {
-                automaticAvatarSources[talker] = automaticAvatarSource
-            } else {
-                automaticAvatarSources.remove(talker)
+            if (!updateAutomaticAvatar(generation, talker, automaticAvatarSource)) {
+                return VirtualRowsResult(ready, changed)
             }
             if (previousAvatarSource != automaticAvatarSource) groupChanged = true
             val latestAvatar = latest?.takeIf { group.previewLatestMessage }?.let { record ->
@@ -1771,7 +1994,7 @@ object ConversationGroupRuntime {
         if (groups.isEmpty()) return
         val method = parentUpdateMethod ?: return
         val receiver = conversationStorage?.takeIf(method.declaringClass::isInstance)
-            ?: database.storageObjectForMethod(method)?.also { conversationStorage = it }
+            ?: database.storageObjectForMethod(method)
             ?: return
         groups.groupBy { (group, _) -> group.parentId?.let(::virtualTalker).orEmpty() }
             .forEach { (parentRef, states) ->
@@ -1887,7 +2110,7 @@ object ConversationGroupRuntime {
         if (talkers.isEmpty()) return true
         val method = parentUpdateMethod ?: return false
         val receiver = conversationStorage?.takeIf(method.declaringClass::isInstance)
-            ?: database.storageObjectForMethod(method)?.also { conversationStorage = it }
+            ?: database.storageObjectForMethod(method)
         if (receiver == null) return false
         return runCatching {
             val usernames = talkers.toTypedArray()
@@ -1913,10 +2136,12 @@ object ConversationGroupRuntime {
         }.getOrDefault(false)
     }
 
-    private fun captureConversationStorage(candidate: Any?, method: Method, context: Context) {
+    private fun captureConversationStorage(candidate: Any?, method: Method, context: Context, generation: Long) {
         if (candidate == null || !method.declaringClass.isInstance(candidate)) return
-        if (conversationStorage === candidate) return
-        conversationStorage = candidate
+        synchronized(lifecycleLock) {
+            if (!isRuntimeGenerationActive(generation) || conversationStorage === candidate) return
+            conversationStorage = candidate
+        }
         syncAsync(context)
     }
 
@@ -2507,22 +2732,24 @@ object ConversationGroupRuntime {
     private fun longValue(row: Map<String, Any>, key: String): Long =
         (row[key] as? Number)?.toLong() ?: value(row, key).toLongOrNull() ?: 0L
 
-    private data class ConversationMenuTarget(
-        val activity: Activity,
-        val talker: String
-    )
+    private class ConversationMenuTarget(activity: Activity, val talker: String) {
+        val activity = WeakReference(activity)
+    }
 
     private data class NativeGroupMenuMethods(
         val create: Method,
         val click: Method
     )
 
-    private data class NativeGroupLongClickTarget(
-        val activity: Activity,
+    private class NativeGroupLongClickTarget(
+        activity: Activity,
         val talker: String,
         val groupId: String,
-        val fragment: Any
-    )
+        fragment: Any
+    ) {
+        val activity = WeakReference(activity)
+        val fragment = WeakReference(fragment)
+    }
 
     private data class NativeGroupMenuTarget(
         val target: NativeGroupLongClickTarget,
@@ -2561,7 +2788,8 @@ object ConversationGroupRuntime {
         val account: String,
         val groups: List<ConversationGroup>,
         val conversationIds: Map<String, List<String>>,
-        val projectedOfficialIds: Set<String>
+        val projectedOfficialIds: Set<String>,
+        val hiddenHomeIds: Set<String>
     )
 
     private data class ConversationRecord(

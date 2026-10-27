@@ -194,6 +194,21 @@ object ScriptPluginRuntime {
         val processScope: Set<String> = setOf(PROCESS_MAIN)
     )
 
+    data class PluginRuntimeSnapshot(
+        val initialized: Boolean,
+        val loaded: Boolean,
+        val processKind: String,
+        val processName: String
+    )
+
+    /** 只查看当前进程，不触发初始化、加载或插件回调。 */
+    fun pluginRuntimeSnapshot(pluginId: String): PluginRuntimeSnapshot = PluginRuntimeSnapshot(
+        initialized = bridge != null,
+        loaded = loadedPlugins.containsKey(pluginId),
+        processKind = runtimeProcess,
+        processName = runtimeProcessName
+    )
+
     private data class LoadedPlugin(
         val plugin: ScriptPlugin,
         val interpreter: Interpreter,
@@ -257,6 +272,8 @@ object ScriptPluginRuntime {
     fun installAppBrandProcess(context: Context, classLoader: ClassLoader, processName: String?) {
         val hostAppContext = context.applicationContext ?: context
         if (!isPluginRuntimeEnabled(hostAppContext)) return
+        // 没有“已启用且声明 appbrand”的插件时，小程序进程不分配脚本桥、不启动加载线程。
+        if (!hasEnabledAppBrandPlugin(hostAppContext)) return
         if (!initialLoadStarted.compareAndSet(false, true)) return
         appContext = hostAppContext
         runtimeProcess = PROCESS_APPBRAND
@@ -343,6 +360,13 @@ object ScriptPluginRuntime {
     private fun isPluginRuntimeEnabled(context: Context): Boolean {
         return HchatStorage.preferences(context, ScriptPluginSettings.PREFS_NAME)
             .getBoolean(ScriptPluginSettings.KEY_ENABLE, ScriptPluginSettings.DEFAULT_ENABLE)
+    }
+
+    /** 至少存在一个已启用且声明 appbrand 的插件时，小程序进程才需要脚本运行时。 */
+    private fun hasEnabledAppBrandPlugin(context: Context): Boolean {
+        return listPlugins(context).any { plugin ->
+            PROCESS_APPBRAND in plugin.processScope && isPluginEnabled(context, plugin.id)
+        }
     }
 
     @Synchronized
@@ -780,6 +804,7 @@ object ScriptPluginRuntime {
             .toList()
         if (targets.isEmpty()) return SendButtonEventResult(false, emptyList())
         for (loaded in targets) {
+            if (loadedPlugins[loaded.plugin.id] !== loaded) continue
             val lock = interpreterLock(loaded.interpreter)
             if (!lock.tryLock()) {
                 logBusySendButtonPlugin(loaded, longClick)
@@ -787,6 +812,7 @@ object ScriptPluginRuntime {
             }
             val startedAt = SystemClock.elapsedRealtime()
             try {
+                if (loadedPlugins[loaded.plugin.id] !== loaded) continue
                 loaded.interpreter.set("__hchat_send_text", text)
                 val callbackName = if (longClick) "onLongClickSendBtn" else "onClickSendBtn"
                 val result = loaded.interpreter.eval("$callbackName(__hchat_send_text);")
@@ -1297,8 +1323,10 @@ object ScriptPluginRuntime {
             .toList()
         if (targets.isEmpty()) return
         for (loaded in targets) {
+            if (loadedPlugins[loaded.plugin.id] !== loaded) continue
             try {
                 withInterpreterLock(loaded.interpreter) {
+                    if (loadedPlugins[loaded.plugin.id] !== loaded) return@withInterpreterLock
                     loaded.interpreter.set("__hchat_member_change_type", type)
                     loaded.interpreter.set("__hchat_member_change_group", groupWxid)
                     loaded.interpreter.set("__hchat_member_change_user", userWxid)
@@ -1335,8 +1363,10 @@ object ScriptPluginRuntime {
             .toList()
         if (targets.isEmpty()) return
         for (loaded in targets) {
+            if (loadedPlugins[loaded.plugin.id] !== loaded) continue
             try {
                 withInterpreterLock(loaded.interpreter) {
+                    if (loadedPlugins[loaded.plugin.id] !== loaded) return@withInterpreterLock
                     loaded.interpreter.set("__hchat_new_friend_wxid", cleanWxid)
                     loaded.interpreter.set("__hchat_new_friend_ticket", cleanTicket)
                     loaded.interpreter.set("__hchat_new_friend_scene", scene)
@@ -1712,14 +1742,14 @@ object ScriptPluginRuntime {
                 void toast(Object msg) { bridge.toast(pluginName, msg); }
                 boolean showModuleDialog(String title, String message) { return bridge.showModuleDialog(title, message); }
                 boolean showModuleDialog(String title, String message, String position) { return bridge.showModuleDialog(title, message, position); }
-                boolean showModuleConfirmDialog(String title, String message, Consumer callback) { return bridge.showModuleConfirmDialog(title, message, callback); }
-                boolean showModuleConfirmDialog(String title, String message, String position, Consumer callback) { return bridge.showModuleConfirmDialog(title, message, position, callback); }
-                boolean showModuleInputDialog(String title, String summary, String initialValue, String placeholder, Consumer callback) { return bridge.showModuleInputDialog(title, summary, initialValue, placeholder, callback); }
-                boolean showModuleInputDialog(String title, String summary, String initialValue, String placeholder, String position, Consumer callback) { return bridge.showModuleInputDialog(title, summary, initialValue, placeholder, position, callback); }
-                boolean showModuleChoiceDialog(String title, String summary, List choices, Consumer callback) { return bridge.showModuleChoiceDialog(title, summary, choices, callback); }
-                boolean showModuleChoiceDialog(String title, String summary, List choices, String position, Consumer callback) { return bridge.showModuleChoiceDialog(title, summary, choices, position, callback); }
-                boolean showModuleMultiChoiceDialog(String title, String summary, List choices, Set initialSelected, Consumer callback) { return bridge.showModuleMultiChoiceDialog(title, summary, choices, initialSelected, callback); }
-                boolean showModuleMultiChoiceDialog(String title, String summary, List choices, Set initialSelected, String position, Consumer callback) { return bridge.showModuleMultiChoiceDialog(title, summary, choices, initialSelected, position, callback); }
+                boolean showModuleConfirmDialog(String title, String message, Consumer callback) { return bridge.showModuleConfirmDialogForPlugin(pluginId, title, message, callback); }
+                boolean showModuleConfirmDialog(String title, String message, String position, Consumer callback) { return bridge.showModuleConfirmDialogForPlugin(pluginId, title, message, position, callback); }
+                boolean showModuleInputDialog(String title, String summary, String initialValue, String placeholder, Consumer callback) { return bridge.showModuleInputDialogForPlugin(pluginId, title, summary, initialValue, placeholder, callback); }
+                boolean showModuleInputDialog(String title, String summary, String initialValue, String placeholder, String position, Consumer callback) { return bridge.showModuleInputDialogForPlugin(pluginId, title, summary, initialValue, placeholder, position, callback); }
+                boolean showModuleChoiceDialog(String title, String summary, List choices, Consumer callback) { return bridge.showModuleChoiceDialogForPlugin(pluginId, title, summary, choices, callback); }
+                boolean showModuleChoiceDialog(String title, String summary, List choices, String position, Consumer callback) { return bridge.showModuleChoiceDialogForPlugin(pluginId, title, summary, choices, position, callback); }
+                boolean showModuleMultiChoiceDialog(String title, String summary, List choices, Set initialSelected, Consumer callback) { return bridge.showModuleMultiChoiceDialogForPlugin(pluginId, title, summary, choices, initialSelected, callback); }
+                boolean showModuleMultiChoiceDialog(String title, String summary, List choices, Set initialSelected, String position, Consumer callback) { return bridge.showModuleMultiChoiceDialogForPlugin(pluginId, title, summary, choices, initialSelected, position, callback); }
                 Object applyModuleFloatingGlassBar(View bottomBar) { return bridge.applyModuleFloatingGlassBar(pluginId, bottomBar); }
                 Object applyModuleFloatingGlassBar(View bottomBar, Map options) { return bridge.applyModuleFloatingGlassBar(pluginId, bottomBar, options); }
                 Object registerPlusMenu(String title, String iconPath, Consumer callback) { return bridge.registerPlusMenu(pluginId, pluginDirFile, title, iconPath, false, callback); }

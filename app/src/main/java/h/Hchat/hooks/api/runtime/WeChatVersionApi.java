@@ -26,6 +26,7 @@ public final class WeChatVersionApi {
             Pattern.compile("(?:NEW_TINKER_ID|TINKER_ID)\\s*[=:]\\s*([^,}\\s]+)");
     private static final Pattern PATCH_ID_PATTERN =
             Pattern.compile("intent_patch_(?:new|old)_version\\s*[=:]\\s*([^,}\\s]+)");
+    private static final String STABLE_CACHE_SCOPE = "stable";
 
     private final Context hostContext;
     private final ClassLoader classLoader;
@@ -131,7 +132,7 @@ public final class WeChatVersionApi {
         String classLoaderHash = loaderHash(loader);
 
         String cacheKey = buildCacheKey(packageName, versionName, versionCode,
-                clientVersion, tinkerId, patchId, sourceLastModified, classLoaderHash);
+                clientVersion, tinkerId, patchId, sourceLastModified, STABLE_CACHE_SCOPE);
         return new WeChatVersionInfo(packageName, versionName, versionCode,
                 clientVersion, tinkerId, patchId, sourceLastModified,
                 classLoaderHash, cacheKey);

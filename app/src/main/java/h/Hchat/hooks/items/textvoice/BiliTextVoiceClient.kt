@@ -1,5 +1,6 @@
 package h.Hchat.hooks.items.textvoice
 
+import h.Hchat.utils.HchatHttp
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,7 +13,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 internal class BiliTextVoiceClient {
-    private val client = OkHttpClient.Builder()
+    private val client = HchatHttp.shared.newBuilder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)

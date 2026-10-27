@@ -1,6 +1,7 @@
 package h.Hchat.hooks.items.conversationgroup
 
 import android.app.Activity
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
@@ -12,15 +13,11 @@ import h.Hchat.hooks.items.quickread.QuickMarkReadRuntime
 import h.Hchat.ui.SettingsUI
 import h.Hchat.ui.miuix.VoiceForwardMiuixDialog
 import h.Hchat.utils.HLog
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal object ConversationGroupMenu {
     private const val TAG = "[Hchat:ConversationGroup]"
     private val main = Handler(Looper.getMainLooper())
-    private val executor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "Hchat-ConversationGroupMenu").apply { isDaemon = true }
-    }
 
     fun show(activity: Activity, groupId: String, onChanged: () -> Unit) {
         val group = group(activity, groupId) ?: return
@@ -65,6 +62,7 @@ internal object ConversationGroupMenu {
     }
 
     private fun markAllRead(activity: Activity, groupId: String, onChanged: () -> Unit) {
+        val context = activity.applicationContext
         val ids = allConversationIds(activity, groupId)
         if (ids.isEmpty()) {
             toast(activity, "当前分组没有会话")
@@ -78,7 +76,7 @@ internal object ConversationGroupMenu {
                 var success = 0
                 ids.forEach { talker ->
                     if (canceled.get()) return@forEach
-                    if (QuickMarkReadRuntime.markConversationRead(activity, talker, false)) success++
+                    if (QuickMarkReadRuntime.markConversationRead(context, talker, false)) success++
                 }
                 BatchResult(success, ids.size, "已读")
             },
@@ -94,6 +92,7 @@ internal object ConversationGroupMenu {
         groupId: String,
         onChanged: () -> Unit
     ) {
+        val context = activity.applicationContext
         val ids = allConversationIds(activity, groupId)
         showConversationPicker(
             activity = activity,
@@ -114,7 +113,7 @@ internal object ConversationGroupMenu {
                         "正在清空聊天记录...",
                         task = { canceled ->
                             val store = WeChatApis.messageStore()
-                            val currentIds = allConversationIds(activity, groupId).toSet()
+                            val currentIds = allConversationIds(context, groupId).toSet()
                             val existingIds = WeChatApis.conversations()
                                 ?.getRecentConversationUsernames(10000)
                                 .orEmpty()
@@ -322,6 +321,7 @@ internal object ConversationGroupMenu {
         ids: List<String>,
         type: SendContentType
     ) {
+        val context = activity.applicationContext
         ConversationGroupSendPicker.launch(
             activity = activity,
             mimeType = type.mimeType ?: return,
@@ -333,7 +333,7 @@ internal object ConversationGroupMenu {
                 title = "发送${type.title}",
                 message = "正在发送到 ${ids.size} 个会话...",
                 task = { canceled ->
-                    val file = ConversationGroupSendPicker.materialize(activity, picked)
+                    val file = ConversationGroupSendPicker.materialize(context, picked)
                     val media = WeChatApis.media()
                     var success = 0
                     ids.forEach { talker ->
@@ -391,16 +391,12 @@ internal object ConversationGroupMenu {
     }
 
     private fun chooseAndSendFavorite(activity: Activity, ids: List<String>) {
-        val canceled = AtomicBoolean(false)
-        val finished = AtomicBoolean(false)
-        val loading = VoiceForwardMiuixDialog.showLoading(
+        ConversationGroupTask.launch(
             activity = activity,
             title = "选择收藏",
             message = "正在读取收藏...",
-            onDismiss = { if (!finished.get()) canceled.set(true) }
-        )
-        executor.execute {
-            val result = runCatching {
+            nextFrame = true,
+            task = { canceled ->
                 val api = WeChatApis.media()?.favorites()
                     ?: throw IllegalStateException("收藏接口未就绪")
                 if (!api.canList()) throw IllegalStateException("收藏列表接口未就绪")
@@ -412,72 +408,60 @@ internal object ConversationGroupMenu {
                     Thread.sleep(350L)
                 }
                 favorites
-            }
-            main.post {
-                finished.set(true)
-                loading.close()
-                val decor = activity.window?.decorView ?: return@post
-                decor.postOnAnimation {
-                    if (canceled.get() || activity.isFinishing || activity.isDestroyed) {
-                        return@postOnAnimation
+            },
+            onComplete = { result ->
+                result.onSuccess { favorites ->
+                    if (favorites.isEmpty()) {
+                        toast(activity, "没有可发送的收藏")
+                        return@onSuccess
                     }
-                    result.onSuccess { favorites ->
-                        if (favorites.isEmpty()) {
-                            toast(activity, "没有可发送的收藏")
-                            return@onSuccess
-                        }
-                        VoiceForwardMiuixDialog.showListChoices(
-                            activity = activity,
-                            title = "选择收藏",
-                            summary = "发送给当前分组及子分组内 ${ids.size} 个会话",
-                            choices = favorites.map { favorite ->
-                                favorite.displayTitle() to
-                                    "${favorite.typeLabel()} · ${favorite.displaySummary()}"
-                            },
-                            searchable = true,
-                            searchPlaceholder = "搜索收藏",
-                            onSelected = { index ->
-                                val favorite = favorites.getOrNull(index)
-                                    ?: return@showListChoices
-                                runBatch(
-                                    activity = activity,
-                                    title = "发送收藏",
-                                    message = "正在发送到 ${ids.size} 个会话...",
-                                    task = { batchCanceled ->
-                                        val api = WeChatApis.media()?.favorites()
-                                        var submitted = 0
-                                        ids.forEach { talker ->
-                                            if (batchCanceled.get()) return@forEach
-                                            if (api?.send(talker, favorite.localId) == true) submitted++
-                                            if (!batchCanceled.get()) Thread.sleep(SEND_INTERVAL_MS)
-                                        }
-                                        BatchResult(submitted, ids.size, "收藏发送请求提交")
-                                    },
-                                    onComplete = { batchResult -> toastBatch(activity, batchResult) }
-                                )
-                            },
-                            onDismiss = {}
-                        )
-                    }.onFailure {
-                        HLog.e("$TAG 读取收藏失败: ${it.message}", it)
-                        toast(activity, "读取收藏失败")
-                    }
+                    VoiceForwardMiuixDialog.showListChoices(
+                        activity = activity,
+                        title = "选择收藏",
+                        summary = "发送给当前分组及子分组内 ${ids.size} 个会话",
+                        choices = favorites.map { favorite ->
+                            favorite.displayTitle() to
+                                "${favorite.typeLabel()} · ${favorite.displaySummary()}"
+                        },
+                        searchable = true,
+                        searchPlaceholder = "搜索收藏",
+                        onSelected = { index ->
+                            val favorite = favorites.getOrNull(index)
+                                ?: return@showListChoices
+                            runBatch(
+                                activity = activity,
+                                title = "发送收藏",
+                                message = "正在发送到 ${ids.size} 个会话...",
+                                task = { batchCanceled ->
+                                    val api = WeChatApis.media()?.favorites()
+                                    var submitted = 0
+                                    ids.forEach { talker ->
+                                        if (batchCanceled.get()) return@forEach
+                                        if (api?.send(talker, favorite.localId) == true) submitted++
+                                        if (!batchCanceled.get()) Thread.sleep(SEND_INTERVAL_MS)
+                                    }
+                                    BatchResult(submitted, ids.size, "收藏发送请求提交")
+                                },
+                                onComplete = { batchResult -> toastBatch(activity, batchResult) }
+                            )
+                        },
+                        onDismiss = {}
+                    )
+                }.onFailure {
+                    HLog.e("$TAG 读取收藏失败: ${it.message}", it)
+                    toast(activity, "读取收藏失败")
                 }
             }
-        }
+        )
     }
 
     private fun chooseAndSendCard(activity: Activity, ids: List<String>) {
-        val canceled = AtomicBoolean(false)
-        val finished = AtomicBoolean(false)
-        val loading = VoiceForwardMiuixDialog.showLoading(
+        ConversationGroupTask.launch(
             activity = activity,
             title = "选择名片",
             message = "正在读取联系人...",
-            onDismiss = { if (!finished.get()) canceled.set(true) }
-        )
-        executor.execute {
-            val result = runCatching {
+            nextFrame = true,
+            task = { _ ->
                 WeChatApis.contact().contacts()?.getPickerContacts().orEmpty().map { contact ->
                     VoiceForwardMiuixDialog.ContactItem(
                         id = contact.wxId,
@@ -489,55 +473,47 @@ internal object ConversationGroupMenu {
                             .filter(String::isNotBlank)
                     )
                 }
-            }
-            main.post {
-                finished.set(true)
-                loading.close()
-                val decor = activity.window?.decorView ?: return@post
-                decor.postOnAnimation {
-                    if (canceled.get() || activity.isFinishing || activity.isDestroyed) {
-                        return@postOnAnimation
+            },
+            onComplete = { result ->
+                result.onSuccess { contacts ->
+                    if (contacts.isEmpty()) {
+                        toast(activity, "没有可发送的联系人名片")
+                        return@onSuccess
                     }
-                    result.onSuccess { contacts ->
-                        if (contacts.isEmpty()) {
-                            toast(activity, "没有可发送的联系人名片")
-                            return@onSuccess
-                        }
-                        VoiceForwardMiuixDialog.showContacts(
-                            activity = activity,
-                            contacts = contacts,
-                            title = "选择名片",
-                            confirmText = "发送",
-                            showGroupFilter = false,
-                            singleSelection = true,
-                            onConfirm = { selected ->
-                                val contact = selected.singleOrNull() ?: return@showContacts
-                                runBatch(
-                                    activity = activity,
-                                    title = "发送名片",
-                                    message = "正在发送到 ${ids.size} 个会话...",
-                                    task = { batchCanceled ->
-                                        val api = WeChatApis.messages()
-                                        var success = 0
-                                        ids.forEach { talker ->
-                                            if (batchCanceled.get()) return@forEach
-                                            if (api?.sendShareCard(talker, contact.id) == true) success++
-                                            if (!batchCanceled.get()) Thread.sleep(SEND_INTERVAL_MS)
-                                        }
-                                        BatchResult(success, ids.size, "发送名片")
-                                    },
-                                    onComplete = { batchResult -> toastBatch(activity, batchResult) }
-                                )
-                            },
-                            onDismiss = {}
-                        )
-                    }.onFailure {
-                        HLog.e("$TAG 读取联系人失败: ${it.message}", it)
-                        toast(activity, "读取联系人失败")
-                    }
+                    VoiceForwardMiuixDialog.showContacts(
+                        activity = activity,
+                        contacts = contacts,
+                        title = "选择名片",
+                        confirmText = "发送",
+                        showGroupFilter = false,
+                        singleSelection = true,
+                        onConfirm = { selected ->
+                            val contact = selected.singleOrNull() ?: return@showContacts
+                            runBatch(
+                                activity = activity,
+                                title = "发送名片",
+                                message = "正在发送到 ${ids.size} 个会话...",
+                                task = { batchCanceled ->
+                                    val api = WeChatApis.messages()
+                                    var success = 0
+                                    ids.forEach { talker ->
+                                        if (batchCanceled.get()) return@forEach
+                                        if (api?.sendShareCard(talker, contact.id) == true) success++
+                                        if (!batchCanceled.get()) Thread.sleep(SEND_INTERVAL_MS)
+                                    }
+                                    BatchResult(success, ids.size, "发送名片")
+                                },
+                                onComplete = { batchResult -> toastBatch(activity, batchResult) }
+                            )
+                        },
+                        onDismiss = {}
+                    )
+                }.onFailure {
+                    HLog.e("$TAG 读取联系人失败: ${it.message}", it)
+                    toast(activity, "读取联系人失败")
                 }
             }
-        }
+        )
     }
 
     private fun sendChatroomInvitation(activity: Activity, groupId: String) {
@@ -769,102 +745,91 @@ internal object ConversationGroupMenu {
         groupId: String,
         onChanged: () -> Unit
     ) {
-        val groups = ConversationGroupStore.load(activity)
+        val context = activity.applicationContext
+        val groups = ConversationGroupStore.load(context)
         val current = groups.firstOrNull { it.id == groupId } ?: return
-        val canceled = AtomicBoolean(false)
-        val finished = AtomicBoolean(false)
-        val loading = VoiceForwardMiuixDialog.showLoading(
+        ConversationGroupTask.launch(
             activity = activity,
             title = "分组排序",
             message = "正在载入会话...",
-            onDismiss = { if (!finished.get()) canceled.set(true) }
-        )
-        executor.execute {
-            val result = runCatching {
+            nextFrame = true,
+            task = { _ ->
                 val effective = ConversationGroupRuntime.effectiveConversationIdsForPicker(groups)
                     .takeIf { it.containsKey(groupId) }
-                    ?: ConversationGroupAutomaticResolver.resolveForSync(activity, groups).conversationIds
+                    ?: ConversationGroupAutomaticResolver.resolveForSync(context, groups).conversationIds
                 val items = conversationItems(effective[groupId] ?: current.conversationIds)
                 orderConversationItems(current, items)
-            }
-            main.post {
-                finished.set(true)
-                loading.close()
-                val decor = activity.window?.decorView ?: return@post
-                decor.postOnAnimation {
-                    if (canceled.get() || activity.isFinishing || activity.isDestroyed) {
-                        return@postOnAnimation
-                    }
-                    result.onSuccess { items ->
-                        if (items.isEmpty()) {
-                            if (current.conversationOrderIds.isEmpty()) {
-                                toast(activity, "当前分组没有会话")
-                            } else {
-                                VoiceForwardMiuixDialog.showChoices(
-                                    activity = activity,
-                                    title = "分组排序",
-                                    summary = "当前没有有效会话，但仍保存了固定顺序",
-                                    choices = listOf(
-                                        "恢复默认排序" to "清除已保存的固定顺序"
-                                    ),
-                                    onSelected = {
-                                        restoreDefaultConversationOrder(
-                                            activity,
-                                            groupId,
-                                            onChanged
-                                        )
-                                    },
-                                    onDismiss = {}
-                                )
-                            }
-                            return@onSuccess
-                        }
-                        val fixed = current.conversationOrderIds.isNotEmpty()
-                        val choices = buildList {
-                            if (fixed) add("恢复默认排序" to "重新跟随微信的置顶和消息时间排序")
-                            items.forEachIndexed { index, item ->
-                                val section = conversationOrderSection(current, item.id)
-                                add(item.label to "第 ${index + 1} 位 · $section")
-                            }
-                        }
-                        VoiceForwardMiuixDialog.showListChoices(
-                            activity = activity,
-                            title = "分组排序",
-                            summary = if (fixed) {
-                                "顺序已固定，新消息不会改变位置"
-                            } else {
-                                "选择会话后调整位置，保存后将固定显示"
-                            },
-                            choices = choices,
-                            searchable = true,
-                            onSelected = { index ->
-                                if (fixed && index == 0) {
+            },
+            onComplete = { result ->
+                result.onSuccess { items ->
+                    if (items.isEmpty()) {
+                        if (current.conversationOrderIds.isEmpty()) {
+                            toast(activity, "当前分组没有会话")
+                        } else {
+                            VoiceForwardMiuixDialog.showChoices(
+                                activity = activity,
+                                title = "分组排序",
+                                summary = "当前没有有效会话，但仍保存了固定顺序",
+                                choices = listOf(
+                                    "恢复默认排序" to "清除已保存的固定顺序"
+                                ),
+                                onSelected = {
                                     restoreDefaultConversationOrder(
                                         activity,
                                         groupId,
                                         onChanged
                                     )
-                                    return@showListChoices
-                                }
-                                val itemIndex = index - if (fixed) 1 else 0
-                                val selected = items.getOrNull(itemIndex) ?: return@showListChoices
-                                showConversationOrderActions(
+                                },
+                                onDismiss = {}
+                            )
+                        }
+                        return@onSuccess
+                    }
+                    val fixed = current.conversationOrderIds.isNotEmpty()
+                    val choices = buildList {
+                        if (fixed) add("恢复默认排序" to "重新跟随微信的置顶和消息时间排序")
+                        items.forEachIndexed { index, item ->
+                            val section = conversationOrderSection(current, item.id)
+                            add(item.label to "第 ${index + 1} 位 · $section")
+                        }
+                    }
+                    VoiceForwardMiuixDialog.showListChoices(
+                        activity = activity,
+                        title = "分组排序",
+                        summary = if (fixed) {
+                            "顺序已固定，新消息不会改变位置"
+                        } else {
+                            "选择会话后调整位置，保存后将固定显示"
+                        },
+                        choices = choices,
+                        searchable = true,
+                        onSelected = { index ->
+                            if (fixed && index == 0) {
+                                restoreDefaultConversationOrder(
                                     activity,
-                                    current,
-                                    items,
-                                    selected.id,
+                                    groupId,
                                     onChanged
                                 )
-                            },
-                            onDismiss = {}
-                        )
-                    }.onFailure {
-                        HLog.e("$TAG 读取分组排序失败: ${it.message}", it)
-                        toast(activity, "读取分组排序失败")
-                    }
+                                return@showListChoices
+                            }
+                            val itemIndex = index - if (fixed) 1 else 0
+                            val selected = items.getOrNull(itemIndex) ?: return@showListChoices
+                            showConversationOrderActions(
+                                activity,
+                                current,
+                                items,
+                                selected.id,
+                                onChanged
+                            )
+                        },
+                        onDismiss = {}
+                    )
+                }.onFailure {
+                    HLog.e("$TAG 读取分组排序失败: ${it.message}", it)
+                    toast(activity, "读取分组排序失败")
                 }
             }
-        }
+        )
     }
 
     private fun restoreDefaultConversationOrder(
@@ -1107,46 +1072,36 @@ internal object ConversationGroupMenu {
             toast(activity, "没有可选择的会话")
             return
         }
-        val canceled = AtomicBoolean(false)
-        val finished = AtomicBoolean(false)
-        val loading = VoiceForwardMiuixDialog.showLoading(
+        ConversationGroupTask.launch(
             activity = activity,
             title = title,
             message = "正在载入会话...",
-            onDismiss = { if (!finished.get()) canceled.set(true) }
-        )
-        executor.execute {
-            val result = runCatching { conversationItems(normalized) }
-            main.post {
-                finished.set(true)
-                loading.close()
-                val decor = activity.window?.decorView ?: return@post
-                decor.postOnAnimation {
-                    if (canceled.get() || activity.isFinishing || activity.isDestroyed) {
-                        return@postOnAnimation
+            nextFrame = true,
+            task = { _ ->
+                conversationItems(normalized)
+            },
+            onComplete = { result ->
+                result.onSuccess { items ->
+                    if (items.isEmpty()) {
+                        toast(activity, "没有可选择的会话")
+                        return@onSuccess
                     }
-                    result.onSuccess { items ->
-                        if (items.isEmpty()) {
-                            toast(activity, "没有可选择的会话")
-                            return@onSuccess
-                        }
-                        VoiceForwardMiuixDialog.showContacts(
-                            activity = activity,
-                            contacts = items,
-                            title = title,
-                            confirmText = confirmText,
-                            showGroupFilter = true,
-                            singleSelection = singleSelection,
-                            onConfirm = onConfirm,
-                            onDismiss = {}
-                        )
-                    }.onFailure {
-                        HLog.e("$TAG $title 读取会话失败: ${it.message}", it)
-                        toast(activity, "读取会话失败")
-                    }
+                    VoiceForwardMiuixDialog.showContacts(
+                        activity = activity,
+                        contacts = items,
+                        title = title,
+                        confirmText = confirmText,
+                        showGroupFilter = true,
+                        singleSelection = singleSelection,
+                        onConfirm = onConfirm,
+                        onDismiss = {}
+                    )
+                }.onFailure {
+                    HLog.e("$TAG $title 读取会话失败: ${it.message}", it)
+                    toast(activity, "读取会话失败")
                 }
             }
-        }
+        )
     }
 
     private fun conversationItems(ids: Collection<String>): List<VoiceForwardMiuixDialog.ContactItem> {
@@ -1183,8 +1138,8 @@ internal object ConversationGroupMenu {
         )
     }
 
-    private fun allConversationIds(activity: Activity, groupId: String): List<String> {
-        val groups = ConversationGroupStore.load(activity)
+    private fun allConversationIds(context: Context, groupId: String): List<String> {
+        val groups = ConversationGroupStore.load(context)
         val effectiveConversationIds = ConversationGroupRuntime.effectiveConversationIdsForPicker(groups)
         return ConversationGroupRuntime.descendantConversationIds(
             groups,
@@ -1208,23 +1163,18 @@ internal object ConversationGroupMenu {
         task: (AtomicBoolean) -> BatchResult,
         onComplete: (BatchResult) -> Unit
     ) {
-        val canceled = AtomicBoolean(false)
-        val loading = VoiceForwardMiuixDialog.showLoading(
+        ConversationGroupTask.launch(
             activity = activity,
             title = title,
             message = message,
-            onDismiss = { canceled.set(true) }
+            task = task,
+            onComplete = { result ->
+                onComplete(result.getOrElse {
+                    HLog.e("$TAG $title 失败: ${it.message}", it)
+                    BatchResult(0, 0, title, failed = true)
+                })
+            }
         )
-        executor.execute {
-            val result = runCatching { task(canceled) }.getOrElse {
-                HLog.e("$TAG $title 失败: ${it.message}", it)
-                BatchResult(0, 0, title, failed = true)
-            }
-            main.post {
-                loading.close()
-                if (!activity.isFinishing && !activity.isDestroyed) onComplete(result)
-            }
-        }
     }
 
     private fun toastBatch(activity: Activity, result: BatchResult) {

@@ -1,6 +1,5 @@
 package h.Hchat.hooks.items.protobuf
 
-import de.robv.android.xposed.XposedBridge
 import h.Hchat.event.Events
 import h.Hchat.hooks.core.BaseFeature
 import h.Hchat.hooks.core.DexInstallScheduler
@@ -32,7 +31,7 @@ class ProtobufPacketFeature : BaseFeature() {
                     context.dexFinder(),
                     prefs,
                     ProtobufPacketFileLogger(context.hostContext())
-                ) { message -> XposedBridge.log("[Hchat:Protobuf] $message") }
+                )
                 val ok = hook.install()
                 if (ok) ProtobufPacketRuntime.install(hook)
                 ok

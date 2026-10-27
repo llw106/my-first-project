@@ -729,14 +729,31 @@ object ConversationGroupStore {
     }
 
     @JvmStatic
-    fun importCurrentAccount(context: Context, raw: String): ImportResult = synchronized(lock) {
+    fun importCurrentAccount(context: Context, raw: String): ImportResult =
+        importCurrentAccount(context, raw, accountKey()) { false }
+
+    /** 文件选择器可能跨账号或被取消，读取完成后仍须在提交边界复查。 */
+    internal fun importCurrentAccount(
+        context: Context,
+        raw: String,
+        expectedAccount: String,
+        canceled: () -> Boolean
+    ): ImportResult = synchronized(lock) {
+        if (canceled()) return@synchronized ImportResult(false, message = "导入已取消")
         val account = accountKey()
+        if (account != expectedAccount) {
+            return@synchronized ImportResult(false, message = "微信账号已切换，请重新选择文件")
+        }
         if (account.isBlank()) {
             return@synchronized ImportResult(false, message = "当前微信账号尚未就绪")
         }
         val parsed = runCatching { parseImport(raw) }.getOrElse {
             HLog.e("$TAG 校验聊天分组导入文件失败: ${it.message}", it)
             return@synchronized ImportResult(false, message = it.message ?: "导入文件格式错误")
+        }
+        if (canceled()) return@synchronized ImportResult(false, message = "导入已取消")
+        if (accountKey() != expectedAccount) {
+            return@synchronized ImportResult(false, message = "微信账号已切换，请重新选择文件")
         }
         if (!saveLocked(context, account, parsed)) {
             return@synchronized ImportResult(false, message = "保存聊天分组失败")

@@ -59,7 +59,7 @@ object DexMethodCache {
         if (runtimeKey.isBlank() || method == null) return
         runCatching {
             val editor = prefs.edit()
-            if (prefs.getString(CACHE_KEY, "") != runtimeKey) {
+            if (!sameRuntime(prefs.getString(CACHE_KEY, ""), runtimeKey)) {
                 editor.clear()
             }
             editor
@@ -90,7 +90,7 @@ object DexMethodCache {
         if (runtimeKey.isBlank() || constructor == null) return
         runCatching {
             val editor = prefs.edit()
-            if (prefs.getString(CACHE_KEY, "") != runtimeKey) {
+            if (!sameRuntime(prefs.getString(CACHE_KEY, ""), runtimeKey)) {
                 editor.clear()
             }
             editor
@@ -146,7 +146,7 @@ object DexMethodCache {
         if (runtimeKey.isBlank() || methods.isEmpty()) return
         runCatching {
             val editor = prefs.edit()
-            if (prefs.getString(CACHE_KEY, "") != runtimeKey) {
+            if (!sameRuntime(prefs.getString(CACHE_KEY, ""), runtimeKey)) {
                 editor.clear()
             }
             editor
@@ -163,7 +163,7 @@ object DexMethodCache {
     ) {
         runCatching {
             val editor = prefs.edit()
-            if (prefs.getString(CACHE_KEY, "") != runtimeKey) {
+            if (!sameRuntime(prefs.getString(CACHE_KEY, ""), runtimeKey)) {
                 editor.clear().putString(CACHE_KEY, runtimeKey)
             }
             editor.remove(name).apply()
@@ -214,7 +214,8 @@ object DexMethodCache {
 
     private fun ensureRuntimeKey(prefs: SharedPreferences, runtimeKey: String): Boolean {
         if (runtimeKey.isBlank()) return false
-        if (prefs.getString(CACHE_KEY, "") == runtimeKey) return true
+        val cachedKey = prefs.getString(CACHE_KEY, "").orEmpty()
+        if (sameRuntime(cachedKey, runtimeKey)) return true
         val updated = runCatching {
             prefs.edit()
                 .clear()
@@ -226,9 +227,9 @@ object DexMethodCache {
 
     private fun sameRuntimeAcrossProcesses(cachedRuntimeKey: String, runtimeKey: String): Boolean {
         if (cachedRuntimeKey.isBlank() || runtimeKey.isBlank()) return false
-        if (cachedRuntimeKey == runtimeKey) return true
-        val cachedIdentity = cachedRuntimeKey.substringBeforeLast('|', "")
-        val runtimeIdentity = runtimeKey.substringBeforeLast('|', "")
-        return cachedIdentity.isNotBlank() && cachedIdentity == runtimeIdentity
+        return DexCacheIdentity.sameRuntime(cachedRuntimeKey, runtimeKey)
     }
+
+    private fun sameRuntime(cachedRuntimeKey: String?, runtimeKey: String): Boolean =
+        DexCacheIdentity.sameRuntime(cachedRuntimeKey, runtimeKey)
 }

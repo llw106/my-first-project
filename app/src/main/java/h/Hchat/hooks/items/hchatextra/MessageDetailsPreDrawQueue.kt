@@ -2,6 +2,7 @@ package h.Hchat.hooks.items.hchatextra
 
 import android.view.View
 import android.view.ViewTreeObserver
+import java.lang.ref.WeakReference
 import java.util.WeakHashMap
 
 /** One pending action per view. Like ViewTreeObserver itself, callers must use the UI thread. */
@@ -25,10 +26,14 @@ internal class MessageDetailsPreDrawQueue {
             }
         }
 
-        override fun onViewDetachedFromWindow(view: View) = Unit
+        override fun onViewDetachedFromWindow(view: View) {
+            if (observer.isAlive) observer.removeOnPreDrawListener(listener)
+            val current = view.viewTreeObserver
+            if (current !== observer && current.isAlive) current.removeOnPreDrawListener(listener)
+        }
     }
 
-    private val pending = WeakHashMap<View, Pending>()
+    private val pending = WeakHashMap<View, WeakReference<Pending>>()
 
     fun schedule(key: View, observedView: View, action: () -> Unit): Boolean {
         cancel(key)
@@ -37,25 +42,25 @@ internal class MessageDetailsPreDrawQueue {
         lateinit var entry: Pending
         val listener = ViewTreeObserver.OnPreDrawListener {
             // Removal cannot retract a callback already in a dispatch snapshot.
-            val current = pending[key] === entry
+            val current = pending[key]?.get() === entry
             if (current) pending.remove(key)
             removeListener(entry)
             if (current) action()
             true
         }
         entry = Pending(observedView, observer, listener)
-        pending[key] = entry
+        pending[key] = WeakReference(entry)
         observedView.addOnAttachStateChangeListener(entry)
         observer.addOnPreDrawListener(listener)
         return true
     }
 
     fun cancel(key: View) {
-        pending.remove(key)?.let(::removeListener)
+        pending.remove(key)?.get()?.let(::removeListener)
     }
 
     fun clear() {
-        val entries = pending.values.toList()
+        val entries = pending.values.mapNotNull { it.get() }
         pending.clear()
         entries.forEach(::removeListener)
     }

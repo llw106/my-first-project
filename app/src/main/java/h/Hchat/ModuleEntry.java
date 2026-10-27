@@ -14,12 +14,15 @@ import h.Hchat.hooks.core.FeatureManager;
 import h.Hchat.hooks.core.HookRegistry;
 import h.Hchat.hooks.items.fakelocation.FakeLocationFeature;
 import h.Hchat.hooks.items.custombottombar.CustomBottomBarFeature;
+import h.Hchat.hooks.items.conversationtabs.ConversationTabsFeature;
 import h.Hchat.hooks.items.hotupdate.DisableHotUpdateFeature;
 import h.Hchat.hooks.items.miniprogrambaselib.FakeMiniProgramBaseLibFeature;
 import h.Hchat.hooks.items.miniprogramsplashad.SkipGlobalMiniProgramSplashAdsFeature;
 import h.Hchat.hooks.items.miniprogramvideoad.SkipMiniProgramVideoAdsFeature;
 import h.Hchat.hooks.items.floatingshortcut.FloatingShortcutRuntime;
 import h.Hchat.hooks.items.script.ScriptPluginRuntime;
+import h.Hchat.hooks.items.script.agent.CodexWebGuard;
+import h.Hchat.hooks.items.script.agent.ModuleResourceMenuFallback;
 import h.Hchat.hooks.items.script.agent.ScriptPluginAgentLocalReverseTools;
 import h.Hchat.hooks.items.tablet.WeChatTabletFeature;
 import h.Hchat.loader.utils.NativeLibraryLoader;
@@ -28,9 +31,12 @@ import h.Hchat.preferences.TermsGate;
 import h.Hchat.dexkit.DexBridgeHolder;
 import h.Hchat.event.EventBus;
 import h.Hchat.ui.UIRegistry;
+import h.Hchat.utils.MemoryTrimController;
 import h.Hchat.utils.HLog;
 
 import org.luckypray.dexkit.DexKitBridge;
+import org.luckypray.dexkit.query.FindMethod;
+import org.luckypray.dexkit.query.matchers.MethodMatcher;
 
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -38,7 +44,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
@@ -92,7 +97,7 @@ public class ModuleEntry implements IXposedHookLoadPackage {
         // 3. Mars CDN 管理器可能早于模块 API 初始化创建，先按稳定类名捕获实例。
         WeChatImageApi.installMarsCdnManagerHook(
                 lpparam.classLoader,
-                message -> XposedBridge.log("[Hchat:WechatApi] " + message));
+                message -> HLog.e("[Hchat:WechatApi] " + message));
 
         // 底栏在 LauncherUI 首帧前创建，必须早于完整 DexKit 初始化安装 Hook。
         installCustomBottomBarEarlyHook(lpparam);
@@ -115,6 +120,12 @@ public class ModuleEntry implements IXposedHookLoadPackage {
                         Application app = (Application) param.thisObject;
                         if (TermsGate.INSTANCE.isAccepted(app)) {
                             CrashReportRuntime.install(app, ModuleEntry.this.getClass().getClassLoader());
+                            // 标签栏先捕获首页根视图，不能等待后台 DexKit 初始化后再挂载。
+                            try {
+                                ConversationTabsFeature.installEarly(resolveHostClassLoader(app, lpparam));
+                            } catch (Throwable e) {
+                                HLog.e(TAG + " 标签分组早期安装失败", e);
+                            }
                             // 悬浮入口不依赖 DexKit，先注册生命周期，避免错过首个 Activity。
                             try {
                                 FloatingShortcutRuntime.INSTANCE.install(app);
@@ -399,6 +410,10 @@ public class ModuleEntry implements IXposedHookLoadPackage {
 
     private void initModule(Context hostContext, XC_LoadPackage.LoadPackageParam lpparam) {
         try {
+            // 0. 注册宿主进程的内存压力回调：微信报内存紧张时，
+            // 模块里那些可重建的缓存（缩略图、头像位图、节流表）才会提前释放。
+            MemoryTrimController.install(hostContext);
+
             // 1. 加载 Native 库（DexKit）
             NativeLibraryLoader nativeLibraryLoader = new NativeLibraryLoader();
             nativeLibraryLoader.loadDexKit(hostContext, getClass().getClassLoader());
@@ -408,15 +423,27 @@ public class ModuleEntry implements IXposedHookLoadPackage {
             Context moduleContext = createModuleContext(hostContext);
             ConfigStore configStore = new ConfigStore(hostContext);
 
+            ModuleResourceMenuFallback.INSTANCE.install(resolveHostClassLoader(hostContext, lpparam));
+
             DexInstallScheduler.runDexKitTask(() -> {
                 // 3. 初始化 DexKit。优先使用 Tinker 之后的运行时 ClassLoader。
                 String apkPath = lpparam.appInfo.sourceDir;
                 ClassLoader hostClassLoader = resolveHostClassLoader(hostContext, lpparam);
                 DexKitBridge dexKit = createDexKitBridge(hostClassLoader, apkPath);
                 DexFinder finder = new DexFinder(dexKit, hostClassLoader, hostContext);
+                try {
+                    FindMethod selfTest = new FindMethod();
+                    MethodMatcher selfMatcher = new MethodMatcher();
+                    selfMatcher.usingStrings(java.util.Arrays.asList("MicroMsg."));
+                    selfTest.matcher(selfMatcher);
+                    int selfCount = dexKit.findMethod(selfTest).size();
+                    HLog.e("[Hchat:DexKitSelfTest]含MicroMsg字符串方法数=" + selfCount + " apk=" + apkPath);
+                } catch (Throwable selfError) {
+                    HLog.e("[Hchat:DexKitSelfTest]自检异常", selfError);
+                }
                 WeChatImageApi.installMarsCdnManagerHook(
                         finder.marsCdnManagerClass,
-                        message -> XposedBridge.log("[Hchat:WechatApi] " + message));
+                        message -> HLog.e("[Hchat:WechatApi] " + message));
 
                 // 4. 创建共享 DexKit 服务
                 DexBridgeHolder dexBridgeHolder = new DexBridgeHolder(
@@ -441,6 +468,9 @@ public class ModuleEntry implements IXposedHookLoadPackage {
                 featureManager = FeatureRegistry.createDefaultManager();
                 featureManager.installAll(featureContext);
 
+                // codex 网页版保活：微信进程重启后把上次开着的服务自动拉回来
+                CodexWebGuard.INSTANCE.restore(hostContext);
+
                 // 7. 防崩兜底：微信 8.0.76 消息描述文本方法对 null 调 isEmpty() 崩溃（收到特殊小程序电商卡片消息触发）
                 installMsgDescTextFallback(finder);
             });
@@ -459,10 +489,9 @@ public class ModuleEntry implements IXposedHookLoadPackage {
         try {
             finder.resolveMsgDescTextApi();
             if (finder.msgDescTextMethods.isEmpty()) {
-                XposedBridge.log("[Hchat:WechatApi] 消息描述防崩兜底未定位到方法");
+                HLog.e("[Hchat:WechatApi] 消息描述防崩兜底未定位到方法");
                 return;
             }
-            int hooked = 0;
             for (Method m : finder.msgDescTextMethods) {
                 if (m == null) continue;
                 try {
@@ -481,11 +510,10 @@ public class ModuleEntry implements IXposedHookLoadPackage {
                                 }
                             }
                     ));
-                    hooked++;
-                } catch (Throwable ignored) {}
+                } catch (Throwable e) {
+                    HLog.e("[Hchat:WechatApi] 消息描述防崩兜底安装失败: " + m, e);
+                }
             }
-            XposedBridge.log("[Hchat:WechatApi] 消息描述防崩兜底已安装: " + hooked + "/"
-                    + finder.msgDescTextMethods.size() + " 个方法");
         } catch (Throwable e) {
             HLog.e(TAG + " 消息描述防崩兜底安装失败: " + e.getMessage(), e);
         }
@@ -531,7 +559,8 @@ public class ModuleEntry implements IXposedHookLoadPackage {
             String key = apkPath != null ? apkPath : "";
             DexKitBridge cached = DEXKIT_BRIDGES.get(key);
             if (cached != null) return cached;
-            DexKitBridge bridge = DexKitBridge.create(apkPath);
+            // 仅缓存轻量入口；实际查询才加载，连续空闲 30 秒后释放 native 分析资源。
+            DexKitBridge bridge = DexKitBridge.createManaged(apkPath, 30_000L);
             DEXKIT_BRIDGES.put(key, bridge);
             return bridge;
         }

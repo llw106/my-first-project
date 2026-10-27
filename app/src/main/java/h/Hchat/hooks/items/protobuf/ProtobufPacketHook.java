@@ -21,24 +21,19 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
 import h.Hchat.dexkit.DexFinder;
 import h.Hchat.hooks.api.core.WeChatApis;
 import h.Hchat.hooks.core.HookRegistry;
+import h.Hchat.utils.HLog;
 import h.Hchat.utils.KavaReflector;
 
 public class ProtobufPacketHook {
-    public interface Logger {
-        void log(String message);
-    }
-
     private static final String TAG = "[Hchat:Protobuf]";
     private static final long SNAPSHOT_TTL_MS = 10 * 60 * 1000L;
 
     private final ClassLoader classLoader;
     private final DexFinder dexFinder;
     private final SharedPreferences prefs;
-    private final Logger logger;
     private final ProtobufPacketFileLogger fileLogger;
     private final ProtobufGenericSender genericSender;
     private final ConcurrentHashMap<String, PacketSnapshot> snapshots = new ConcurrentHashMap<>();
@@ -49,13 +44,11 @@ public class ProtobufPacketHook {
     public ProtobufPacketHook(ClassLoader classLoader,
                               DexFinder dexFinder,
                               SharedPreferences prefs,
-                              ProtobufPacketFileLogger fileLogger,
-                              Logger logger) {
+                              ProtobufPacketFileLogger fileLogger) {
         this.classLoader = classLoader;
         this.dexFinder = dexFinder;
         this.prefs = prefs;
         this.fileLogger = fileLogger;
-        this.logger = logger;
         this.genericSender = new ProtobufGenericSender(dexFinder, classLoader);
     }
 
@@ -128,7 +121,7 @@ public class ProtobufPacketHook {
             notify(callback, true, "已用原生场景发送: " + uri + " type=" + cgiId);
             return true;
         }
-        log("原生场景发送失败: type=" + cgiId + " uri=" + uri + " scene=" + scene.getClass().getName());
+        error("原生场景发送失败: type=" + cgiId + " uri=" + uri + " scene=" + scene.getClass().getName());
         return false;
     }
 
@@ -137,13 +130,9 @@ public class ProtobufPacketHook {
         try {
             Class<?> sceneClass = dexFinder.findNativeNetSceneClass(uri, cgiId);
             if (sceneClass == null) return null;
-            Object scene = buildSceneByClass(sceneClass, payload, cgiId);
-            if (scene != null) {
-                log("原生场景已构造: type=" + cgiId + " class=" + scene.getClass().getName());
-            }
-            return scene;
+            return buildSceneByClass(sceneClass, payload, cgiId);
         } catch (Throwable e) {
-            log("原生场景构造失败: type=" + cgiId + " uri=" + uri + " msg=" + e.getMessage());
+            HLog.e(TAG + " 原生场景构造失败: type=" + cgiId + " uri=" + uri, e);
             return null;
         }
     }
@@ -157,8 +146,6 @@ public class ProtobufPacketHook {
             Object scene = KavaReflector.newInstance(ctor, values);
             if (scene == null) continue;
             if (sceneType(scene) == cgiId) {
-                log("原生场景参数: type=" + cgiId + " ctor=" + ctor.getParameterCount()
-                        + " query=" + args.keys());
                 return scene;
             }
         }
@@ -271,9 +258,6 @@ public class ProtobufPacketHook {
                 trimSnapshots();
                 if (listenerEnabled) {
                     broadcastPacket(ProtobufPacketRuntime.DIRECTION_REQUEST, uri, cgiId, snapshot.bytes);
-                }
-                if (logEnabled && !blocked) {
-                    log("快照保存: type=" + cgiId + " uri=" + uri + " req=" + snapshot.reqPbObj.getClass().getName());
                 }
                 if (logEnabled && !blocked && captureRequestEnabled()
                         && shouldLog("req|" + snapshot.key(), snapshot.bytes)) {
@@ -496,11 +480,6 @@ public class ProtobufPacketHook {
             if (now - snapshot.time > SNAPSHOT_TTL_MS) continue;
             if (exactLatest == null || snapshot.time > exactLatest.time) exactLatest = snapshot;
         }
-        if (exactLatest != null) {
-            log("快照命中: type=" + cgiId + " uri=" + targetUri + " req=" + exactLatest.reqPbObj.getClass().getName());
-        } else {
-            log("快照未命中: type=" + cgiId + " uri=" + targetUri);
-        }
         return exactLatest;
     }
 
@@ -527,14 +506,8 @@ public class ProtobufPacketHook {
     }
 
     private void logPacket(String direction, String uri, int cgiId, byte[] bytes) {
-        String json = packetJson(bytes);
-        XposedBridge.log(TAG + " " + direction
-                + "\nUri: " + uri
-                + "\nType: " + cgiId
-                + "\nLen: " + (bytes == null ? 0 : bytes.length)
-                + "\nJson: " + json);
         if (fileLogger != null) {
-            fileLogger.append(direction, uri, cgiId, bytes == null ? 0 : bytes.length, json);
+            fileLogger.append(direction, uri, cgiId, bytes == null ? 0 : bytes.length, packetJson(bytes));
         }
     }
 
@@ -600,15 +573,11 @@ public class ProtobufPacketHook {
 
     private void notify(ProtobufPacketRuntime.Callback callback, boolean success, String message) {
         if (callback != null) callback.onResult(success, message);
-        if (success) log(message); else error(message);
-    }
-
-    private void log(String message) {
-        if (logger != null) logger.log(message);
+        if (!success) error(message);
     }
 
     private void error(String message) {
-        XposedBridge.log(TAG + " " + message);
+        HLog.e(TAG + " " + message);
     }
 
     private static final class PacketSnapshot {
@@ -693,10 +662,6 @@ public class ProtobufPacketHook {
         int intAt(int index) {
             List<Integer> values = orderedInts();
             return index >= 0 && index < values.size() ? values.get(index) : 0;
-        }
-
-        String keys() {
-            return query.keySet().toString();
         }
 
         private List<Integer> orderedInts() {

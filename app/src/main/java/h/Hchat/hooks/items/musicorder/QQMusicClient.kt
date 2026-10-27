@@ -1,5 +1,6 @@
 package h.Hchat.hooks.items.musicorder
 
+import h.Hchat.utils.HchatHttp
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -10,7 +11,7 @@ import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 internal class QQMusicClient {
-    private val client = OkHttpClient.Builder()
+    private val client = HchatHttp.shared.newBuilder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .callTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)

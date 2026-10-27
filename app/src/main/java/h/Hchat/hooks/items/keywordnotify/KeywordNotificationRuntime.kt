@@ -37,7 +37,9 @@ import java.net.URL
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Collections
 import java.util.Date
+import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -49,12 +51,19 @@ object KeywordNotificationRuntime {
     private const val CHANNEL_PREFIX = "Hchat_keyword_notification_"
     private const val CHANNEL_NAME = "Hchat 关键词通知"
     private const val EXTRA_KEYWORD_NOTIFY = "hchat_keyword_notification"
+    private const val AVATAR_CACHE_MAX_ENTRIES = 64
     private val notifySeq = AtomicInteger(0)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "Hchat-KeywordNotify").apply { isDaemon = true }
     }
-    private val avatarCache = ConcurrentHashMap<String, Bitmap?>()
+    private val avatarCache = Collections.synchronizedMap(
+        object : LinkedHashMap<String, Bitmap?>(AVATAR_CACHE_MAX_ENTRIES, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap?>?): Boolean {
+                return size > AVATAR_CACHE_MAX_ENTRIES
+            }
+        }
+    )
     @Volatile private var avatarRoot: String? = null
     @Volatile private var lastManualSoundAt: Long = 0L
 

@@ -7,6 +7,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 object ScriptMemberChangeHook {
     private const val DEDUP_WINDOW_MS = 5000L
+    private const val MAX_MEMBER_SNAPSHOT_GROUPS = 2048
+    private const val MAX_MEMBER_NAME_ENTRIES = 32768
+    private const val MAX_RECENT_EVENTS = 2048
     @Volatile
     private var installed = false
     private val memberSnapshots = ConcurrentHashMap<String, Set<String>>()
@@ -43,7 +46,9 @@ object ScriptMemberChangeHook {
         val current = currentMembers(change)
         if (current.isEmpty()) return
         rememberCurrentGroupNickNames(groupWxid, current)
-        val previous = memberSnapshots.put(groupWxid, current) ?: return
+        val previous = memberSnapshots.put(groupWxid, current)
+        trimCaches()
+        if (previous == null) return
         val joined = current - previous
         val left = previous - current
         if (joined.isEmpty() && left.isEmpty()) return
@@ -94,6 +99,7 @@ object ScriptMemberChangeHook {
             if (members.isEmpty()) continue
             memberSnapshots.putIfAbsent(groupWxid, members)
             rememberCurrentGroupNickNames(groupWxid, members)
+            trimCaches()
         }
     }
 
@@ -106,6 +112,7 @@ object ScriptMemberChangeHook {
                 memberNameCache[cacheKey(groupWxid, memberWxid)] = name
             }
         }
+        trimCaches()
     }
 
     private fun rememberDisplayNames(groupWxid: String, change: WeChatChatroomChangeApi.ChatroomChange) {
@@ -120,6 +127,7 @@ object ScriptMemberChangeHook {
                 memberNameCache[cacheKey(groupWxid, wxid)] = name
             }
         }
+        trimCaches()
     }
 
     private fun handleObservedMessage(message: ScriptMessageBean) {
@@ -132,6 +140,7 @@ object ScriptMemberChangeHook {
             if (name.isNotBlank() && name != wxid) {
                 memberNameCache[cacheKey(groupWxid, wxid)] = name
             }
+            trimCaches()
             dispatchMemberChange(TYPE_JOIN, groupWxid, wxid, memberName(groupWxid, wxid))
         }
     }
@@ -226,12 +235,30 @@ object ScriptMemberChangeHook {
         val previous = recentEvents[key]
         if (previous != null && now - previous < DEDUP_WINDOW_MS) return
         recentEvents[key] = now
+        trimCaches()
         ScriptPluginRuntime.dispatchOnMemberChange(type, groupWxid, wxid, userName)
     }
 
     private fun cleanupRecentEvents(now: Long) {
-        if (recentEvents.size < 128) return
-        recentEvents.entries.removeIf { now - it.value > DEDUP_WINDOW_MS }
+        if (recentEvents.size >= 128) {
+            recentEvents.entries.removeIf { now - it.value > DEDUP_WINDOW_MS }
+        }
+        trimCaches()
+    }
+
+    private fun trimCaches() {
+        while (memberSnapshots.size > MAX_MEMBER_SNAPSHOT_GROUPS) {
+            val key = memberSnapshots.keys.firstOrNull() ?: break
+            memberSnapshots.remove(key)
+        }
+        while (memberNameCache.size > MAX_MEMBER_NAME_ENTRIES) {
+            val key = memberNameCache.keys.firstOrNull() ?: break
+            memberNameCache.remove(key)
+        }
+        while (recentEvents.size > MAX_RECENT_EVENTS) {
+            val oldest = recentEvents.entries.minByOrNull { it.value } ?: break
+            recentEvents.remove(oldest.key, oldest.value)
+        }
     }
 
     private fun cacheKey(groupWxid: String, userWxid: String): String = "$groupWxid|$userWxid"

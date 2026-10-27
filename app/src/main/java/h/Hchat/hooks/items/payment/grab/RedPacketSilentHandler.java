@@ -8,6 +8,7 @@ import h.Hchat.hooks.api.net.WeChatNetworkDispatcher;
 import h.Hchat.hooks.api.runtime.WeChatTaskApi;
 import h.Hchat.hooks.core.HookRegistry;
 import h.Hchat.hooks.items.payment.core.RedPacketSettings;
+import h.Hchat.hooks.items.payment.core.RedPacketEffectiveRule;
 import h.Hchat.hooks.items.payment.core.RedPacketState;
 import h.Hchat.hooks.items.payment.detect.RedPacketParser;
 import h.Hchat.hooks.items.payment.detect.RedPacketReflector;
@@ -56,6 +57,8 @@ public class RedPacketSilentHandler {
     private final NotifyCallback notifyCallback;
     private final FailureCallback failureCallback;
     private final Logger logger;
+    private final android.os.Handler fallbackHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Map<String, Runnable> fallbackTasks = new java.util.concurrent.ConcurrentHashMap<>();
 
     private boolean receiveHooked = false;
     private boolean openHooked = false;
@@ -91,12 +94,16 @@ public class RedPacketSilentHandler {
                 + " dispatcher=" + networkDispatcher.hasDispatcherInstance()
                 + " method=" + networkDispatcher.hasDispatcherMethod());
 
-        if (!settings.isSilentGrabEnabled()) {
+        if (!isSilentPacketEnabled(nativeUrl)) {
             log("  放弃: silentGrabEnabled=false");
+            cleanup(RedPacketState.redPacketId(nativeUrl));
+            state.finishDetectedPacket(nativeUrl);
             return;
         }
         if (dexFinder.receiveLuckyMoneyClass == null && dexFinder.receiveLuckyMoneyUnionClass == null) {
             log("  放弃: receiveLuckyMoneyClass=null union=null");
+            cleanup(RedPacketState.redPacketId(nativeUrl));
+            state.finishDetectedPacket(nativeUrl);
             return;
         }
         if (TextUtils.isEmpty(nativeUrl)) {
@@ -107,7 +114,10 @@ public class RedPacketSilentHandler {
         try {
             String sendId = RedPacketParser.getNativeUrlParam(nativeUrl, "sendid");
             log("  sendid=" + sendId);
-            if (TextUtils.isEmpty(sendId)) return;
+            if (TextUtils.isEmpty(sendId)) {
+                state.finishDetectedPacket(nativeUrl);
+                return;
+            }
 
             if (state.silentFinishedSet.contains(sendId)
                     || state.silentReceivingSet.contains(sendId)
@@ -126,8 +136,17 @@ public class RedPacketSilentHandler {
             String headImg = RedPacketParser.getXmlParamByTag(content, "headimgurl");
             String nickName = RedPacketParser.getXmlParamByTag(content, "sendertitle");
             String requestNativeUrl = normalizeFakePacketNativeUrl(nativeUrl, talker);
+            // 企业微信红包的 sceneid 在不同版本/入口不一定固定为 1005。
             boolean useUnion = RedPacketParser.getLuckyMoneySceneId(content, talker, nativeUrl) == 1005
-                    && dexFinder.receiveLuckyMoneyUnionClass != null;
+                    || RedPacketParser.isUnionLuckyMoney(content, talker, nativeUrl);
+            if (useUnion && (dexFinder.receiveLuckyMoneyUnionClass == null
+                    || dexFinder.openLuckyMoneyUnionClass == null)) {
+                log("  放弃: 企业红包 Union 请求类不完整 receive="
+                        + (dexFinder.receiveLuckyMoneyUnionClass != null)
+                        + " open=" + (dexFinder.openLuckyMoneyUnionClass != null));
+                cleanup(sendId);
+                return;
+            }
 
             Map<String, Object> info = new HashMap<>();
             info.put("sendid", sendId);
@@ -171,9 +190,17 @@ public class RedPacketSilentHandler {
             log("静默收包: " + sendId + " count=" + sentCount + (useUnion ? " [Union]" : ""));
             scheduleReceiveTimeout(sendId);
         } catch (Throwable e) {
+            cleanup(RedPacketState.redPacketId(nativeUrl));
+            state.finishDetectedPacket(nativeUrl);
             log("ERROR trySilentReceive: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    private boolean isSilentPacketEnabled(String nativeUrl) {
+        if (!settings.isEnabled()) return false;
+        RedPacketEffectiveRule rule = TextUtils.isEmpty(nativeUrl) ? null : state.ruleMap.get(nativeUrl);
+        return rule != null ? rule.getEnabled() && rule.getGrabMode() == 1 : settings.isSilentGrabEnabled();
     }
 
     private Object newReceiveRequest(Class<?> clazz, java.lang.reflect.Constructor<?> ctor, Object[] args) {
@@ -258,14 +285,24 @@ public class RedPacketSilentHandler {
             HookRegistry.get().hook(onGYNetEnd, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
-                    if (!settings.isSilentGrabEnabled()) return;
+                    if (!settings.isEnabled()) return;
                     try {
+                        Object jsonObj = param.args != null && param.args.length > 2 ? param.args[2] : null;
                         Map<String, Object> info = state.silentReceiveRequestInfoMap.get(param.thisObject);
+                        boolean unionCallback = dexFinder.receiveLuckyMoneyUnionClass != null
+                                && dexFinder.receiveLuckyMoneyUnionClass.isAssignableFrom(param.thisObject.getClass());
+                        String callbackSendId = RedPacketReflector.readJsonString(jsonObj, "sendId");
+                        if (TextUtils.isEmpty(callbackSendId)) {
+                            callbackSendId = RedPacketReflector.readJsonString(jsonObj, "sendid");
+                        }
+                        if (info == null && unionCallback && !TextUtils.isEmpty(callbackSendId)) {
+                            info = state.silentRedPacketMap.get(callbackSendId);
+                        }
                         if (info == null) return;
                         String sendId = (String) info.get("sendid");
+                        if (TextUtils.isEmpty(sendId)) sendId = callbackSendId;
                         if (TextUtils.isEmpty(sendId) || !state.silentReceivingSet.contains(sendId)) return;
 
-                        Object jsonObj = param.args[2];
                         if (jsonObj == null || !matchesRequestSendId(jsonObj, sendId)) return;
                         if (param.args[0] instanceof Number && ((Number) param.args[0]).intValue() != 0) {
                             HLog.e("[Hchat:RedPacket] 收红包响应失败: sendid=" + sendId
@@ -277,7 +314,8 @@ public class RedPacketSilentHandler {
                         log("收红包响应: sendid=" + sendId + " timingId=" + timingIdentifier);
                         if (TextUtils.isEmpty(timingIdentifier)) return;
 
-                        if (state.silentReceiveRequestInfoMap.remove(param.thisObject) != info) return;
+                        Map<String, Object> ownedInfo = state.silentReceiveRequestInfoMap.remove(param.thisObject);
+                        if (ownedInfo != null && ownedInfo != info) return;
                         if (!state.silentOpeningSet.add(sendId)) return;
                         state.silentReceivingSet.remove(sendId);
                         cancelTask(receiveTimeoutKey(sendId));
@@ -286,8 +324,13 @@ public class RedPacketSilentHandler {
                         if (TextUtils.isEmpty(requestNativeUrl)) requestNativeUrl = (String) info.get("nativeurl");
                         String requestTalker = (String) info.get("requestTalker");
                         if (TextUtils.isEmpty(requestTalker)) requestTalker = (String) info.get("talker");
-                        boolean useUnionOpen = Boolean.TRUE.equals(info.get("isUnion"))
-                                && dexFinder.openLuckyMoneyUnionClass != null;
+                        boolean useUnionOpen = Boolean.TRUE.equals(info.get("isUnion"));
+                        if (useUnionOpen && dexFinder.openLuckyMoneyUnionClass == null) {
+                            log("拆红包失败: 企业红包 Union 开包类缺失");
+                            notifyFailure(info, sendId, "企业红包 Union 开包类缺失");
+                            cleanup(sendId);
+                            return;
+                        }
 
                         int msgType = info.get("msgtype") instanceof Integer ? (int) info.get("msgtype") : 1;
                         int channelId = info.get("channelid") instanceof Integer ? (int) info.get("channelid") : 1;
@@ -315,28 +358,28 @@ public class RedPacketSilentHandler {
                             openRequest = RedPacketReflector.newInstanceByArgs(
                                     dexFinder.openLuckyMoneyUnionClass, openArgs);
                         }
-                        if (openRequest == null && dexFinder.openCtor10 != null) {
+                        if (openRequest == null && !useUnionOpen && dexFinder.openCtor10 != null) {
                             try {
                                 openRequest = KavaReflector.newInstance(dexFinder.openCtor10,
                                         msgType, channelId, sendId, requestNativeUrl,
                                         headImg, nickName, requestTalker, "v1.0", timingIdentifier, "");
                             } catch (Throwable ignored) {}
                         }
-                        if (openRequest == null && dexFinder.openCtor8 != null) {
+                        if (openRequest == null && !useUnionOpen && dexFinder.openCtor8 != null) {
                             try {
                                 openRequest = KavaReflector.newInstance(dexFinder.openCtor8,
                                         msgType, channelId, sendId, requestNativeUrl,
                                         headImg, nickName, requestTalker, timingIdentifier);
                             } catch (Throwable ignored) {}
                         }
-                        if (openRequest == null && dexFinder.openCtor9 != null) {
+                        if (openRequest == null && !useUnionOpen && dexFinder.openCtor9 != null) {
                             try {
                                 openRequest = KavaReflector.newInstance(dexFinder.openCtor9,
                                         msgType, channelId, sendId, requestNativeUrl,
                                         headImg, nickName, requestTalker, "v1.0", timingIdentifier);
                             } catch (Throwable ignored) {}
                         }
-                        if (openRequest == null) {
+                        if (openRequest == null && !useUnionOpen) {
                             Object[] openArgs = {msgType, channelId, sendId, requestNativeUrl,
                                     headImg, nickName, requestTalker, "v1.0", timingIdentifier, ""};
                             openRequest = RedPacketReflector.newInstanceByArgs(dexFinder.openLuckyMoneyClass, openArgs);
@@ -397,13 +440,26 @@ public class RedPacketSilentHandler {
             HookRegistry.get().hook(onGYNetEnd, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
-                    if (!settings.isSilentGrabEnabled()) return;
+                    if (!settings.isEnabled()) return;
                     try {
                         String sendId = state.silentOpenRequestSendIdMap.get(param.thisObject);
-                        if (TextUtils.isEmpty(sendId) || !state.silentOpeningSet.contains(sendId)) return;
+                        boolean unionCallback = dexFinder.openLuckyMoneyUnionClass != null
+                                && dexFinder.openLuckyMoneyUnionClass.isAssignableFrom(param.thisObject.getClass());
                         Object jsonObj = (param.args != null && param.args.length > 2) ? param.args[2] : null;
+                        if (TextUtils.isEmpty(sendId)) {
+                            if (!unionCallback) return;
+                            sendId = RedPacketReflector.readJsonString(jsonObj, "sendId");
+                            if (TextUtils.isEmpty(sendId)) {
+                                sendId = RedPacketReflector.readJsonString(jsonObj, "sendid");
+                            }
+                        }
+                        if (TextUtils.isEmpty(sendId) && unionCallback && state.silentOpeningSet.size() == 1) {
+                            sendId = state.silentOpeningSet.iterator().next();
+                        }
+                        if (TextUtils.isEmpty(sendId) || !state.silentOpeningSet.contains(sendId)) return;
                         if (!matchesRequestSendId(jsonObj, sendId)) return;
-                        if (!sendId.equals(state.silentOpenRequestSendIdMap.remove(param.thisObject))) return;
+                        String ownedSendId = state.silentOpenRequestSendIdMap.remove(param.thisObject);
+                        if (ownedSendId != null && !sendId.equals(ownedSendId)) return;
                         cancelTask(openTimeoutKey(sendId));
 
                         int errCode = 0;
@@ -434,18 +490,22 @@ public class RedPacketSilentHandler {
 
                         log("拆红包完成: sendid=" + sendId + " amount=" + amount + " talker=" + talker);
 
-                        String nativeUrl = info != null ? (String) info.get("nativeurl") : null;
-                        if (!TextUtils.isEmpty(nativeUrl) && statsCallback != null) {
-                            statsCallback.incrementStats(nativeUrl);
-                        }
-
-                        if (notifyCallback != null) {
-                            notifyCallback.onReceived(
-                                    amount,
-                                    talker != null ? talker : "",
-                                    nativeUrl,
-                                    sendId,
-                                    jsonObj);
+                        // 通知、回复模板和祝福语先读取本红包快照，完成后只保留轻量去重ID。
+                        try {
+                            String nativeUrl = info != null ? (String) info.get("nativeurl") : null;
+                            if (!TextUtils.isEmpty(nativeUrl) && statsCallback != null) {
+                                statsCallback.incrementStats(nativeUrl);
+                            }
+                            if (notifyCallback != null) {
+                                notifyCallback.onReceived(
+                                        amount,
+                                        talker != null ? talker : "",
+                                        nativeUrl,
+                                        sendId,
+                                        jsonObj);
+                            }
+                        } finally {
+                            cleanup(sendId);
                         }
                     } catch (Throwable e) {
                         log("ERROR openCallback: " + e.getMessage());
@@ -482,18 +542,38 @@ public class RedPacketSilentHandler {
     private void cleanup(String sendId) {
         cancelTask(receiveTimeoutKey(sendId));
         cancelTask(openTimeoutKey(sendId));
+        cancelTask(receiveRetryKey(sendId));
+        cancelTask(openRetryKey(sendId));
         state.cleanupSilentPacket(sendId);
+    }
+
+    public void cancelPendingPackets() {
+        java.util.Set<String> ids = new java.util.HashSet<>(state.silentRedPacketMap.keySet());
+        ids.addAll(state.silentReceivingSet);
+        ids.addAll(state.silentOpeningSet);
+        ids.addAll(state.silentReceiveRetryMap.keySet());
+        ids.addAll(state.silentOpenRetryMap.keySet());
+        for (String id : ids) cleanup(id);
+        for (String key : new ArrayList<>(fallbackTasks.keySet())) cancelTask(key);
     }
 
     private void notifyFailure(Map<String, Object> info, String sendId, String reason) {
         if (failureCallback == null) return;
         String talker = info != null ? (String) info.get("talker") : "";
         String nativeUrl = info != null ? (String) info.get("nativeurl") : "";
-        failureCallback.onFailed(talker, nativeUrl, sendId, reason);
+        try {
+            failureCallback.onFailed(talker, nativeUrl, sendId, reason);
+        } catch (Throwable error) {
+            HLog.e("[Hchat:RedPacket] 失败通知异常", error);
+        }
     }
 
     private void scheduleReceiveTimeout(String sendId) {
         runDelayed(receiveTimeoutKey(sendId), RECEIVE_TIMEOUT_MS, () -> {
+            if (!settings.isEnabled()) {
+                cleanup(sendId);
+                return;
+            }
             if (TextUtils.isEmpty(sendId)
                     || state.silentFinishedSet.contains(sendId)
                     || state.silentOpeningSet.contains(sendId)
@@ -529,6 +609,10 @@ public class RedPacketSilentHandler {
 
     private void scheduleOpenTimeout(String sendId) {
         runDelayed(openTimeoutKey(sendId), OPEN_TIMEOUT_MS, () -> {
+            if (!settings.isEnabled()) {
+                cleanup(sendId);
+                return;
+            }
             if (TextUtils.isEmpty(sendId)
                     || state.silentFinishedSet.contains(sendId)
                     || !state.silentOpeningSet.contains(sendId)) {
@@ -553,6 +637,10 @@ public class RedPacketSilentHandler {
         state.silentOpenRetryMap.put(sendId, nextAttempt);
         log("静默拆包重试: sendid=" + sendId + " attempt=" + nextAttempt + " reason=" + reason);
         runDelayed(openRetryKey(sendId), 1200L * nextAttempt, () -> {
+            if (!settings.isEnabled()) {
+                cleanup(sendId);
+                return;
+            }
             if (!state.silentOpeningSet.contains(sendId) || state.silentFinishedSet.contains(sendId)) return;
             if (sendOpenRequest(openRequest, sendId)) {
                 scheduleOpenTimeout(sendId);
@@ -572,10 +660,19 @@ public class RedPacketSilentHandler {
                 return;
             }
         } catch (Throwable ignored) {}
-        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(runnable, delayMs);
+        cancelTask(key);
+        Runnable tracked = new Runnable() {
+            @Override public void run() {
+                if (fallbackTasks.remove(key, this)) runnable.run();
+            }
+        };
+        fallbackTasks.put(key, tracked);
+        if (!fallbackHandler.postDelayed(tracked, delayMs)) fallbackTasks.remove(key, tracked);
     }
 
     private void cancelTask(String key) {
+        Runnable fallback = fallbackTasks.remove(key);
+        if (fallback != null) fallbackHandler.removeCallbacks(fallback);
         try {
             WeChatTaskApi tasks = WeChatApis.runtime().tasks();
             if (tasks != null && tasks.isAvailable()) tasks.cancel(key);

@@ -1,0 +1,31 @@
+import missing.runtime.UnknownApi;
+
+@OptionalAnnotation(value = "accepted by runtime")
+void greet(String name = "朋友") {
+    toast("你好，$name");
+}
+
+class NativeBridge {
+    native int read();
+}
+
+class Holder {
+    value = "dynamic field";
+    static {
+        System.setProperty("hchat.syntax.test.executed", "class");
+    }
+}
+
+text = """a raw string with "quotes", }, native and ```
+and a second line""";
+counter = 0;
+onLoad() {
+    counter++;
+    greet();
+}
+void onClickSendBtn(String content) {
+    return true;
+}
+System.setProperty("hchat.syntax.test.executed", "top-level");
+new Holder();
+throw new RuntimeException("must not execute");

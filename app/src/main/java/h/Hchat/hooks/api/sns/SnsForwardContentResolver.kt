@@ -1,5 +1,6 @@
 package h.Hchat.hooks.api.sns
 
+import h.Hchat.utils.HchatHttp
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
@@ -82,7 +83,7 @@ internal class SnsForwardContentResolver(
     private val context: FeatureContext,
     private val logger: (String, Throwable?) -> Unit
 ) {
-    private val client = OkHttpClient.Builder()
+    private val client = HchatHttp.shared.newBuilder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .callTimeout(180, TimeUnit.SECONDS)

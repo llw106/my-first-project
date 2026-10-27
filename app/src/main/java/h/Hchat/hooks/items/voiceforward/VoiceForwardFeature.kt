@@ -1183,7 +1183,10 @@ private class VoiceForwardHooker(
 
     private fun resolveVoiceSource(message: Any): VoiceSource? {
         val fileName = voiceFileName(message)
-        if (fileName.isBlank()) return null
+        if (fileName.isBlank()) {
+            voiceDiag("文件名为空 msgClass=" + message.javaClass.name)
+            return null
+        }
         var path = WeChatApis.media()?.voices()?.resolvePath(message, fileName).orEmpty()
         if (path.isBlank() || !File(path).isFile) {
             // 兜底：文件可能尚未落盘，短轮询重试（最多 3 x 100ms）
@@ -1194,10 +1197,46 @@ private class VoiceForwardHooker(
                 attempt++
             }
         }
-        if (path.isBlank() || !File(path).isFile) return null
+        if (path.isBlank() || !File(path).isFile) {
+            // 兜底：DexKit 未定位到微信内部方法时，直接在 MicroMsg/voice2 目录里按文件名找
+            path = scanVoiceFileOnDisk(fileName).orEmpty()
+            voiceDiag("磁盘兜底 fileName=" + fileName + " -> '" + path + "'")
+        }
+        if (path.isBlank() || !File(path).isFile) {
+            voiceDiag(
+                "解析失败 fileName=" + fileName +
+                    " msgClass=" + message.javaClass.name +
+                    " dexPath方法=" + (context.dexFinder()?.voiceMessagePathMethod?.name ?: "null") +
+                    " dexFullPath方法=" + (context.dexFinder()?.voiceFullPathMethod?.name ?: "null")
+            )
+            return null
+        }
+        voiceDiag("解析成功 fileName=" + fileName + " path=" + path)
         return VoiceSource(path, resolveVoiceDuration(message, fileName))
     }
-
+    private fun voiceDiag(text: String) {
+        runCatching { de.robv.android.xposed.XposedBridge.log("[Hchat:voice] " + text) }
+    }
+    /** 兜底：直接扫描微信语音目录 MicroMsg/<账号>/voice2/xx/yy/msg_<fileName>.* */
+    private fun scanVoiceFileOnDisk(fileName: String): String? {
+        val host = runCatching { context.hostContext() }.getOrNull() ?: return null
+        val suffixes = arrayOf(".amr", ".silk", ".mp3", ".slk", ".aud")
+        val candidates = ArrayList<File>()
+        runCatching {
+            val microMsg = File(host.applicationInfo.dataDir, "MicroMsg")
+            microMsg.listFiles()?.forEach { account ->
+                val voice2 = File(account, "voice2")
+                if (!voice2.isDirectory) return@forEach
+                voice2.listFiles()?.forEach { first ->
+                    suffixes.forEach { candidates.add(File(first, "msg_" + fileName + it)) }
+                    first.listFiles()?.forEach { second ->
+                        suffixes.forEach { candidates.add(File(second, "msg_" + fileName + it)) }
+                    }
+                }
+            }
+        }
+        return candidates.firstOrNull { runCatching { it.isFile }.getOrDefault(false) }?.absolutePath
+    }
     private fun resolveFavoriteVoiceSource(favorite: Any): VoiceSource? {
         if (!isFavoriteVoice(favorite)) return null
         val data = firstFavoriteDataItem(favorite) ?: return null
@@ -2016,7 +2055,9 @@ private class VoiceForwardHooker(
     }
 
     private fun loadContacts(): List<ContactRow> {
-        val api = WeChatApis.contact().contacts() ?: return emptyList()
+        val api = WeChatApis.contact().contacts()
+        voiceDiag("联系人 API=" + (api != null) + " 可用=" + (api?.isAvailable ?: false))
+        if (api == null) return emptyList()
         if (!api.isAvailable) return emptyList()
         val rows = ArrayList<ContactRow>()
         val labelsByUser = linkedMapOf<String, MutableList<String>>()
@@ -2029,8 +2070,11 @@ private class VoiceForwardHooker(
                 }
             }
         }
-        rows += api.getPickerContacts().mapNotNull { it.toRow(false, labelsByUser[it.wxId].orEmpty()) }
-        rows += api.getPickerGroups().mapNotNull { it.toRow(true, emptyList()) }
+        val pickerContacts = runCatching { api.getPickerContacts() }.getOrDefault(emptyList())
+        val pickerGroups = runCatching { api.getPickerGroups() }.getOrDefault(emptyList())
+        voiceDiag("联系人数量=" + pickerContacts.size + " 群数量=" + pickerGroups.size)
+        rows += pickerContacts.mapNotNull { it.toRow(false, labelsByUser[it.wxId].orEmpty()) }
+        rows += pickerGroups.mapNotNull { it.toRow(true, emptyList()) }
         val conversationOrder = WeChatApis.conversations()
             ?.getRecentConversationUsernames(10000)
             .orEmpty()

@@ -14,6 +14,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 object ScriptNewFriendHook {
     private const val DEDUP_WINDOW_MS = 3000L
     private const val VERIFY_ALIAS_WINDOW_MS = 10 * 60 * 1000L
+    private const val MAX_RECENT_EVENTS = 1024
+    private const val MAX_VERIFY_ALIASES = 4096
     private val parseApi = WeChatMessageParseApi()
     private val recentEvents = ConcurrentHashMap<String, Long>()
     private val recentVerifyAliases = ConcurrentHashMap<String, VerifyAlias>()
@@ -49,6 +51,7 @@ object ScriptNewFriendHook {
         val previous = recentEvents[key]
         if (previous != null && now - previous < DEDUP_WINDOW_MS) return
         recentEvents[key] = now
+        trimCaches()
         dispatchNative(event)
         ScriptPluginRuntime.dispatchOnNewFriend(event.wxid, event.ticket, event.scene)
     }
@@ -127,6 +130,7 @@ object ScriptNewFriendHook {
         val previous = recentEvents[key]
         if (previous != null && now - previous < DEDUP_WINDOW_MS) return
         recentEvents[key] = now
+        trimCaches()
         dispatchNative(event)
         ScriptPluginRuntime.dispatchOnNewFriend(event.wxid, event.ticket, event.scene)
     }
@@ -307,6 +311,7 @@ object ScriptNewFriendHook {
         if (recentVerifyAliases.isNotEmpty()) {
             recentVerifyAliases.entries.removeIf { now - it.value.time > VERIFY_ALIAS_WINDOW_MS }
         }
+        trimCaches()
     }
 
     private fun registerVerifyAlias(event: NewFriendEvent, now: Long) {
@@ -314,6 +319,18 @@ object ScriptNewFriendHook {
         if (event.wxid == event.verifyUsername) return
         val alias = VerifyAlias(event.wxid, event.verifyUsername, event.ticket, event.scene, now)
         recentVerifyAliases[aliasKey(event.wxid, event.ticket, event.scene)] = alias
+        trimCaches()
+    }
+
+    private fun trimCaches() {
+        while (recentEvents.size > MAX_RECENT_EVENTS) {
+            val oldest = recentEvents.entries.minByOrNull { it.value } ?: break
+            recentEvents.remove(oldest.key, oldest.value)
+        }
+        while (recentVerifyAliases.size > MAX_VERIFY_ALIASES) {
+            val oldest = recentVerifyAliases.entries.minByOrNull { it.value.time } ?: break
+            recentVerifyAliases.remove(oldest.key, oldest.value)
+        }
     }
 
     private fun dedupKey(event: NewFriendEvent): String {

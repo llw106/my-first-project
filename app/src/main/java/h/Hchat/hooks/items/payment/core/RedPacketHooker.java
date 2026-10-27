@@ -2,12 +2,13 @@ package h.Hchat.hooks.items.payment.core;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.text.TextUtils;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import de.robv.android.xposed.XposedBridge;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import h.Hchat.dexkit.DexFinder;
 import h.Hchat.hooks.api.core.WeChatApis;
@@ -35,8 +36,6 @@ import h.Hchat.utils.KavaReflector;
  */
 public class RedPacketHooker {
 
-    private static final String TAG = "[Hchat:RedPacket]";
-
     // ---- 全局状态 ----
     private final Context hostContext;
     private final ClassLoader classLoader;
@@ -57,6 +56,8 @@ public class RedPacketHooker {
     private final RedPacketWishSender wishSender;
     private final RedPacketAnnouncer announcer;
     private final RedPacketNewGroupBlocker newGroupBlocker;
+    private final Set<String> pendingTaskKeys = ConcurrentHashMap.newKeySet();
+    private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener;
 
     // ---- 快速设置缓存 ----
     private boolean sFastSkipSelf = false;
@@ -65,7 +66,6 @@ public class RedPacketHooker {
     private String sFastKeywords = "";
     private String sFastMyWxid = "";
 
-    private boolean mLogEnabled = false;
     private boolean observeSubscribed = false;
 
     public RedPacketHooker(Context context, ClassLoader classLoader, DexFinder dexFinder) {
@@ -105,6 +105,7 @@ public class RedPacketHooker {
         this.uiAutomator = new RedPacketUiAutomator(
                 classLoader,
                 settings,
+                state,
                 this::shouldFilterRedBag,
                 this::handleUiReceived,
                 this::handleUiFailed,
@@ -138,13 +139,19 @@ public class RedPacketHooker {
                 this::handleSilentFailed,
                 this::logx
         );
+        this.preferenceListener = (preferences, key) -> {
+            if (RedPacketSettings.KEY_ENABLE.equals(key) && !settings.isEnabled()) {
+                releaseActivePackets();
+            }
+        };
+        SharedPreferences preferences = settings.getHostPreferences();
+        if (preferences != null) preferences.registerOnSharedPreferenceChangeListener(preferenceListener);
     }
 
     // ==================== 入口 ====================
 
     public List<Object> hookAll() {
         List<Object> subscriptions = new ArrayList<>();
-        mLogEnabled = settings.getBoolean(RedPacketSettings.KEY_LOG_ENABLE, false);
         refreshFastSettingsCache();
         Object newGroupSubscription = newGroupBlocker.install();
         if (newGroupSubscription != null) subscriptions.add(newGroupSubscription);
@@ -184,17 +191,7 @@ public class RedPacketHooker {
     // ==================== 工具方法 ====================
 
     private void logx(Object msg) {
-        if (mLogEnabled || isImportantLog(msg)) XposedBridge.log(TAG + " " + msg);
-    }
-
-    private boolean isImportantLog(Object msg) {
-        if (msg == null) return false;
-        String text = String.valueOf(msg);
-        return text.startsWith("ERROR")
-                || text.contains("失败")
-                || text.contains("未找到")
-                || text.contains("不可用")
-                || text.contains("无合适方法");
+        RedPacketLogger.log(msg);
     }
 
     private boolean getBoolean(String key, boolean def) {
@@ -258,7 +255,7 @@ public class RedPacketHooker {
             logx("红包检测入口: WeChatApis.message().observe()");
             return true;
         } catch (Throwable e) {
-            logx("ERROR 安装消息观察失败: " + e.getMessage());
+            RedPacketLogger.error("安装消息观察失败", e);
             return false;
         }
     }
@@ -273,7 +270,12 @@ public class RedPacketHooker {
         if (TextUtils.isEmpty(nativeUrl) && !TextUtils.isEmpty(message.content)) {
             nativeUrl = RedPacketParser.getXmlParamByTag(message.content, "nativeurl");
         }
-        if (TextUtils.isEmpty(nativeUrl)) return;
+        if (TextUtils.isEmpty(nativeUrl)) {
+            logx("ERROR 识别到红包但链接为空，停止处理：来源=" + message.source
+                    + " XML长度=" + (xml == null ? 0 : xml.length())
+                    + " 内容长度=" + (message.content == null ? 0 : message.content.length()));
+            return;
+        }
 
         String exclusiveRecvUser = RedPacketParser.getXmlParamByTag(xml, "exclusive_recv_username");
         if (TextUtils.isEmpty(exclusiveRecvUser) && !TextUtils.isEmpty(message.content)) {
@@ -364,28 +366,24 @@ public class RedPacketHooker {
     }
 
     private void handleUiReceived(String nativeUrl, String amount, boolean selfSent) {
-        if (!TextUtils.isEmpty(nativeUrl) && !stats.incrementSuccess(nativeUrl)) return;
-        String talker = !TextUtils.isEmpty(nativeUrl) ? state.talkerMap.get(nativeUrl) : null;
-        RedPacketEffectiveRule rule = resolveReceivedRule(nativeUrl);
-        notificationCenter.notifyReceived(amount, talker, nativeUrl, rule);
-        announcer.announceReceived(amount, talker, nativeUrl, rule);
-        autoReply.replyAfterGrabbed(nativeUrl, talker, amount, selfSent);
-        if (!TextUtils.isEmpty(nativeUrl)) {
-            state.senderMap.remove(nativeUrl);
-            state.contentMap.remove(nativeUrl);
-            state.talkerMap.remove(nativeUrl);
-            state.ruleMap.remove(nativeUrl);
+        try {
+            if (!TextUtils.isEmpty(nativeUrl) && !stats.incrementSuccess(nativeUrl)) return;
+            String talker = !TextUtils.isEmpty(nativeUrl) ? state.talkerMap.get(nativeUrl) : null;
+            RedPacketEffectiveRule rule = resolveReceivedRule(nativeUrl);
+            notificationCenter.notifyReceived(amount, talker, nativeUrl, rule);
+            announcer.announceReceived(amount, talker, nativeUrl, rule);
+            autoReply.replyAfterGrabbed(nativeUrl, talker, amount, selfSent);
+        } finally {
+            state.finishDetectedPacket(nativeUrl);
         }
     }
 
     private void handleUiFailed(String nativeUrl, String reason) {
-        String talker = !TextUtils.isEmpty(nativeUrl) ? state.talkerMap.get(nativeUrl) : null;
-        notificationCenter.notifyFailed(talker, nativeUrl, reason, resolveReceivedRule(nativeUrl));
-        if (!TextUtils.isEmpty(nativeUrl)) {
-            state.senderMap.remove(nativeUrl);
-            state.contentMap.remove(nativeUrl);
-            state.talkerMap.remove(nativeUrl);
-            state.ruleMap.remove(nativeUrl);
+        try {
+            String talker = !TextUtils.isEmpty(nativeUrl) ? state.talkerMap.get(nativeUrl) : null;
+            notificationCenter.notifyFailed(talker, nativeUrl, reason, resolveReceivedRule(nativeUrl));
+        } finally {
+            state.finishDetectedPacket(nativeUrl);
         }
     }
 
@@ -393,11 +391,15 @@ public class RedPacketHooker {
 
     private void handleSilentReceived(String amount, String talker,
                                       String nativeUrl, String sendId, Object jsonObj) {
-        RedPacketEffectiveRule rule = resolveReceivedRule(nativeUrl);
-        notificationCenter.notifyReceived(amount, talker, nativeUrl, rule);
-        announcer.announceReceived(amount, talker, nativeUrl, rule);
-        autoReply.replyAfterGrabbed(nativeUrl, talker, amount, false);
-        wishSender.sendFromOpenResult(sendId, jsonObj);
+        try {
+            RedPacketEffectiveRule rule = resolveReceivedRule(nativeUrl);
+            notificationCenter.notifyReceived(amount, talker, nativeUrl, rule);
+            announcer.announceReceived(amount, talker, nativeUrl, rule);
+            autoReply.replyAfterGrabbed(nativeUrl, talker, amount, false);
+            wishSender.sendFromOpenResult(sendId, jsonObj);
+        } finally {
+            state.finishDetectedPacket(nativeUrl);
+        }
     }
 
     private void handleSilentFailed(String talker, String nativeUrl, String sendId, String reason) {
@@ -433,6 +435,7 @@ public class RedPacketHooker {
         String rej = getRedBagRejectReason(sender, talker, xml, exUser, nu);
         if (rej != null) {
             logx(source + " 忽略: " + rej);
+            state.finishDetectedPacket(nu);
             return;
         }
         long delay = rule.nextDelayMillis();
@@ -451,7 +454,13 @@ public class RedPacketHooker {
             } else {
                 final String fxml = xml, ft = talker, fn = nu;
                 scheduleOnMain("redpacket_receive:" + fn, delay,
-                        () -> silentHandler.tryReceive(fxml, ft, fn));
+                        () -> {
+                            if (!settings.isEnabled()) {
+                                state.finishDetectedPacket(fn);
+                                return;
+                            }
+                            silentHandler.tryReceive(fxml, ft, fn);
+                        });
             }
         } else {
             // UI 模式
@@ -460,30 +469,61 @@ public class RedPacketHooker {
             notificationCenter.notifyIncoming(talker, nu, rule);
             final String ft = talker, fn = nu, fs = sender;
             scheduleOnMain("redpacket_ui:" + fn, delay, () -> {
-                Intent intent = new Intent();
-                intent.putExtra("key_native_url", fn);
-                intent.putExtra("key_username", ft);
-                if (!TextUtils.isEmpty(fs)) intent.putExtra("key_from_username", fs);
-                startLuckyMoneyActivity(intent);
+                if (!settings.isEnabled() || shouldFilterRedBag(fn)) {
+                    state.finishDetectedPacket(fn);
+                    return;
+                }
+                if (!state.markUiPending(fn)) {
+                    state.finishDetectedPacket(fn);
+                    return;
+                }
+                Intent intent = RedPacketUiAutomator.createReceiveIntent(xml, ft, fn, fs);
+                if (!startLuckyMoneyActivity(intent)) state.finishDetectedPacket(fn);
             });
         }
     }
 
     private void scheduleOnMain(String key, long delay, Runnable runnable) {
         if (runnable == null) return;
+        pendingTaskKeys.add(key);
+        Runnable tracked = () -> {
+            pendingTaskKeys.remove(key);
+            runnable.run();
+        };
         try {
             WeChatTaskApi tasks = WeChatApis.runtime().tasks();
             if (tasks != null && tasks.isAvailable()) {
-                tasks.runOnMainDelayed(key, Math.max(0L, delay), runnable);
+                tasks.runOnMainDelayed(key, Math.max(0L, delay), tracked);
                 return;
             }
         } catch (Throwable e) {
             logx("任务API调度失败，直接执行: " + e.getMessage());
         }
-        runnable.run();
+        pendingTaskKeys.remove(key);
+        tracked.run();
     }
 
-    private void startLuckyMoneyActivity(Intent intent) {
+    public void dispose() {
+        SharedPreferences preferences = settings.getHostPreferences();
+        if (preferences != null) preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener);
+        releaseActivePackets();
+    }
+
+    private void releaseActivePackets() {
+        try {
+            WeChatTaskApi tasks = WeChatApis.runtime().tasks();
+            if (tasks != null) {
+                for (String key : pendingTaskKeys) tasks.cancel(key);
+            }
+        } catch (Throwable ignored) {
+        }
+        pendingTaskKeys.clear();
+        silentHandler.cancelPendingPackets();
+        autoReply.cancelPendingReplies();
+        state.clearActivePackets();
+    }
+
+    private boolean startLuckyMoneyActivity(Intent intent) {
         String[] cls = {"nk4.l", "oq4.l", "pn4.l", "qm4.l", "rm4.l",
                 "sm4.l", "tm4.l", "um4.l", "vm4.l", "wl4.l"};
         String[] mns = {"A", "B", "C", "D"};
@@ -498,7 +538,7 @@ public class RedPacketHooker {
                                 KavaReflector.loadClass(cn, classLoader),
                                 mn, hostContext, "luckymoney", a, intent);
                         logx("启动: " + a);
-                        return;
+                        return true;
                     } catch (Throwable ignored) {}
                 }
             }
@@ -509,9 +549,10 @@ public class RedPacketHooker {
                         "com.tencent.mm.plugin.luckymoney" + a);
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 hostContext.startActivity(intent);
-                return;
+                return true;
             } catch (Throwable ignored) {}
         }
+        return false;
     }
 
     // ==================== 静默模式 ====================

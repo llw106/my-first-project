@@ -1,6 +1,6 @@
 package h.Hchat.hooks.items.autoreply
 
-import de.robv.android.xposed.XposedBridge
+import h.Hchat.utils.HLog
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
@@ -31,7 +31,6 @@ object XiaozhiConsoleApi {
         if (!result.successful) error("图形验证码请求失败: HTTP ${result.code}")
         return result.text.also {
             if (!it.contains("<svg", ignoreCase = true)) error("图形验证码格式异常")
-            log("图形验证码已刷新 len=${it.length}")
         }
     }
 
@@ -41,7 +40,6 @@ object XiaozhiConsoleApi {
             put("phone", normalizedPhone)
             put("captcha_code", captchaCode.trim())
         }
-        log("短信验证码请求: phoneLen=${normalizedPhone.length} captchaLen=${captchaCode.trim().length}")
         val result = postText("/api/auth/send-code", token = "", body = body)
         if (!result.successful) {
             log("短信验证码请求失败: HTTP ${result.code} phoneLen=${normalizedPhone.length} body=${sanitizeResponse(result.text)}")
@@ -52,7 +50,6 @@ object XiaozhiConsoleApi {
             log("短信验证码业务失败: phoneLen=${normalizedPhone.length} body=${sanitizeResponse(result.text)}")
             error(obj.optString("message").ifBlank { "短信验证码请求失败" })
         }
-        log("短信验证码已发送 phoneLen=${normalizedPhone.length}")
         return "短信验证码已发送"
     }
 
@@ -62,7 +59,6 @@ object XiaozhiConsoleApi {
             put("phone", normalizedPhone)
             put("code", smsCode.trim())
         }
-        log("手机号登录请求: phoneLen=${normalizedPhone.length} codeLen=${smsCode.trim().length}")
         val result = postText("/api/auth/phone-login", token = "", body = body)
         if (!result.successful) {
             log("手机号登录失败: HTTP ${result.code} phoneLen=${normalizedPhone.length} body=${sanitizeResponse(result.text)}")
@@ -75,7 +71,6 @@ object XiaozhiConsoleApi {
         }
         val token = obj.optJSONObject("data")?.optString("token").orEmpty()
         if (token.isBlank()) error("登录成功但未返回 token")
-        log("手机号登录成功 tokenPresent=true")
         return token
     }
 
@@ -100,7 +95,7 @@ object XiaozhiConsoleApi {
                     )
                 )
             }
-        }.also { log("智能体列表已拉取 count=${it.size}") }
+        }
     }
 
     fun fetchModels(token: String): List<XiaozhiModelOption> {
@@ -115,7 +110,7 @@ object XiaozhiConsoleApi {
                 if (name.isBlank()) continue
                 add(XiaozhiModelOption(name, item.optString("description").ifBlank { name }))
             }
-        }.also { log("模型列表已拉取 count=${it.size}") }
+        }
     }
 
     fun fetchVoices(token: String): List<XiaozhiVoiceOption> {
@@ -135,7 +130,7 @@ object XiaozhiConsoleApi {
                 }.orEmpty()
                 add(XiaozhiVoiceOption(voiceId, item.optString("name").ifBlank { voiceId }, languages))
             }
-        }.also { log("语音角色列表已拉取 count=${it.size}") }
+        }
     }
 
     fun fetchAgentConfig(token: String, agentId: String): JSONObject {
@@ -169,7 +164,6 @@ object XiaozhiConsoleApi {
         if (!result.successful) error("保存智能体配置失败: HTTP ${result.code}")
         val obj = JSONObject(result.text.ifBlank { "{}" })
         if (!obj.optBoolean("success", false)) error(obj.optString("message").ifBlank { "保存智能体配置失败" })
-        log("智能体配置已保存 agentId=$agentId modelSet=${!model.isNullOrBlank()} voiceSet=${!voice.isNullOrBlank()}")
         val updated = fetchAgentConfig(token, agentId)
         return XiaozhiAgentOption(
             id = agentId.trim(),
@@ -283,7 +277,7 @@ object XiaozhiConsoleApi {
     }
 
     private fun log(message: String) {
-        XposedBridge.log("$TAG $message")
+        HLog.e("$TAG $message")
     }
 
     private data class HttpTextResult(

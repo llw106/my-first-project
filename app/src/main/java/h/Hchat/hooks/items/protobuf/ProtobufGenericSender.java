@@ -8,8 +8,8 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 
-import de.robv.android.xposed.XposedBridge;
 import h.Hchat.dexkit.DexFinder;
+import h.Hchat.utils.HLog;
 import h.Hchat.utils.KavaReflector;
 
 final class ProtobufGenericSender {
@@ -33,13 +33,6 @@ final class ProtobufGenericSender {
                 notify(callback, false, "通用发包失败: 对象创建失败");
                 return true;
             }
-            XposedBridge.log(TAG + " 发包请求: type=" + cgiId
-                    + " req=" + req.getClass().getName()
-                    + " len=" + (body == null ? 0 : body.length)
-                    + " func=" + funcId
-                    + " route=" + routeId
-                    + " special=" + isSpecificRequest(cgiId, req.getClass()));
-
             writeField(builder, "a", req);
             writeField(builder, "b", resp);
             writeField(builder, "c", uri);
@@ -54,7 +47,7 @@ final class ProtobufGenericSender {
                 notify(callback, false, "通用发包失败: ReqResp构造失败");
                 return true;
             }
-            return dispatch(cgiId, uri, body, reqResp, callback, req.getClass().getName());
+            return dispatch(cgiId, uri, reqResp, callback);
         } catch (Throwable e) {
             notify(callback, false, "通用发包失败: " + e.getMessage());
             return true;
@@ -65,8 +58,8 @@ final class ProtobufGenericSender {
         return cgiId == 522 || cgiId == 681;
     }
 
-    private boolean dispatch(int cgiId, String uri, byte[] body, Object reqResp,
-                             ProtobufPacketRuntime.Callback callback, String requestDesc) {
+    private boolean dispatch(int cgiId, String uri, Object reqResp,
+                             ProtobufPacketRuntime.Callback callback) {
         Object cb = Proxy.newProxyInstance(
                 classLoader,
                 new Class[]{dexFinder.protobufCallbackClass},
@@ -89,11 +82,6 @@ final class ProtobufGenericSender {
             return true;
         }
         if (scene != null) ProtobufPacketRuntime.markGenericScene(scene);
-        XposedBridge.log(TAG + " 发包Dispatch: type=" + cgiId
-                + " reqResp=" + reqResp.getClass().getName()
-                + " req=" + requestDesc
-                + " len=" + (body == null ? 0 : body.length)
-                + " scene=" + (scene == null ? "null" : scene.getClass().getName()));
         notify(callback, true, "通用发包已发送: " + uri + " type=" + cgiId);
         return true;
     }
@@ -140,17 +128,6 @@ final class ProtobufGenericSender {
         return parsed != null ? parsed : req;
     }
 
-    private boolean isSpecificRequest(int cgiId, Class<?> clazz) {
-        if (clazz == null) return false;
-        if (cgiId == 522 && dexFinder.protobufNewSendMsgReqClass != null) {
-            return dexFinder.protobufNewSendMsgReqClass.isAssignableFrom(clazz);
-        }
-        if (cgiId == 681 && dexFinder.protobufOplogReqClass != null) {
-            return dexFinder.protobufOplogReqClass.isAssignableFrom(clazz);
-        }
-        return false;
-    }
-
     private Object buildReqResp(Object builder) {
         try {
             Object value = KavaReflector.invoke(KavaReflector.findMethod(builder.getClass(), "a"), builder);
@@ -186,20 +163,13 @@ final class ProtobufGenericSender {
             Object reqResp = args.length > 3 ? args[3] : null;
             byte[] bytes = extractRespBytes(reqResp);
             String json = bytes != null ? ProtoJsonCodec.toJson(bytes).toString() : "{}";
-            XposedBridge.log(TAG + " 发包回调: type=" + cgiId
-                    + " uri=" + uri
-                    + " errType=" + errType
-                    + " errCode=" + errCode
-                    + " errMsg=" + errMsg
-                    + " respLen=" + (bytes == null ? 0 : bytes.length)
-                    + " resp=" + json);
             if (errType == 0 && errCode == 0) {
                 notify(callback, true, "响应: " + json);
                 return;
             }
             String message = "响应失败: type=" + errType + " code=" + errCode + " msg=" + errMsg;
             if (cgiId == 681) {
-                XposedBridge.log(TAG + " Oplog回包非成功但请求已发送: uri=" + uri + " " + message);
+                HLog.e(TAG + " Oplog回包非成功但请求已发送: uri=" + uri + " " + message);
                 return;
             }
             notify(callback, false, message);
@@ -232,6 +202,7 @@ final class ProtobufGenericSender {
     }
 
     private void notify(ProtobufPacketRuntime.Callback callback, boolean success, String message) {
+        if (!success) HLog.e(TAG + " " + message);
         if (callback == null) return;
         new Handler(Looper.getMainLooper()).post(() -> callback.onResult(success, message));
     }

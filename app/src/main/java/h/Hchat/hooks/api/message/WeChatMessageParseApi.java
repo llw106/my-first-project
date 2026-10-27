@@ -5,6 +5,7 @@ import android.text.TextUtils;
 import h.Hchat.hooks.api.model.WeChatParsedMessage;
 import h.Hchat.hooks.api.model.WeChatMessage;
 import h.Hchat.utils.KavaReflector;
+import h.Hchat.utils.XmlValueReader;
 
 import java.lang.reflect.Field;
 import java.util.regex.Matcher;
@@ -51,15 +52,7 @@ public final class WeChatMessageParseApi {
     }
 
     public String getXmlParamByTag(String xml, String tag) {
-        if (TextUtils.isEmpty(xml) || TextUtils.isEmpty(tag)) return "";
-        try {
-            Matcher cdata = Pattern.compile("<" + tag + "><!\\[CDATA\\[(.*?)\\]></" + tag + ">")
-                    .matcher(xml);
-            if (cdata.find()) return cdata.group(1);
-            Matcher plain = Pattern.compile("<" + tag + ">(.*?)</" + tag + ">").matcher(xml);
-            if (plain.find()) return plain.group(1);
-        } catch (Throwable ignored) {}
-        return "";
+        return XmlValueReader.getTagValue(xml, tag);
     }
 
     public String getNativeUrlParam(String url, String key) {

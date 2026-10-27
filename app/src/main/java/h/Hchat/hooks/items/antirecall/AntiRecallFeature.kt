@@ -138,7 +138,7 @@ class AntiRecallFeature : BaseFeature() {
             )
         )
         if (publishedRecallEvents.size > MAX_CACHED_MESSAGES) {
-            publishedRecallEvents.take(publishedRecallEvents.size - MAX_CACHED_MESSAGES)
+            publishedRecallEvents.take((publishedRecallEvents.size - MAX_CACHED_MESSAGES).coerceAtLeast(0))
                 .forEach { publishedRecallEvents.remove(it) }
         }
     }
@@ -203,7 +203,7 @@ class AntiRecallFeature : BaseFeature() {
         if (message == null || message.talker.isBlank() || message.msgSvrId <= 0L || message.isRecalled()) return
         messageCache[cacheKey(message.talker, message.msgSvrId)] = message
         if (messageCache.size > MAX_CACHED_MESSAGES) {
-            messageCache.keys.take(messageCache.size - MAX_CACHED_MESSAGES).forEach { messageCache.remove(it) }
+            messageCache.keys.take((messageCache.size - MAX_CACHED_MESSAGES).coerceAtLeast(0)).forEach { messageCache.remove(it) }
         }
     }
 
@@ -451,7 +451,9 @@ class AntiRecallFeature : BaseFeature() {
         }
         val msgId = msgIdFromWhere(whereClauseArg(args), stringArrayArg(args))
         if (msgId <= 0L) return false
-        val rawRow = rawMessageRows[msgId] ?: queryRawMessageRow(table, msgId)?.also { rawMessageRows[msgId] = it }
+        val rawRow = rawMessageRows[msgId] ?: queryRawMessageRow(table, msgId)?.also {
+            rememberRawMessageRow(msgId, it)
+        }
         val original = WeChatApis.messageStore()?.getMessageById(msgId)
         val self = selfRecallMsgIds.contains(msgId) || original?.isSend() == true
         if (self) {
@@ -526,7 +528,17 @@ class AntiRecallFeature : BaseFeature() {
         if (msgId <= 0L) return
         selfRecallMsgIds.add(msgId)
         if (selfRecallMsgIds.size > MAX_CACHED_MESSAGES) {
-            selfRecallMsgIds.take(selfRecallMsgIds.size - MAX_CACHED_MESSAGES).forEach { selfRecallMsgIds.remove(it) }
+            selfRecallMsgIds.take((selfRecallMsgIds.size - MAX_CACHED_MESSAGES).coerceAtLeast(0)).forEach { selfRecallMsgIds.remove(it) }
+        }
+    }
+
+    private fun rememberRawMessageRow(msgId: Long, row: Map<String, Any>) {
+        synchronized(rawMessageRows) {
+            rawMessageRows[msgId] = row
+            val keys = rawMessageRows.keys.iterator()
+            while (rawMessageRows.size > MAX_CACHED_MESSAGES && keys.hasNext()) {
+                rawMessageRows.remove(keys.next())
+            }
         }
     }
 
@@ -800,7 +812,7 @@ class AntiRecallFeature : BaseFeature() {
         if (key.isBlank()) return
         handledRecalls.add(key)
         if (handledRecalls.size > MAX_CACHED_MESSAGES) {
-            handledRecalls.take(handledRecalls.size - MAX_CACHED_MESSAGES).forEach { handledRecalls.remove(it) }
+            handledRecalls.take((handledRecalls.size - MAX_CACHED_MESSAGES).coerceAtLeast(0)).forEach { handledRecalls.remove(it) }
         }
     }
 

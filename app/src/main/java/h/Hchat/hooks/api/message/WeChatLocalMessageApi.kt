@@ -2,10 +2,10 @@ package h.Hchat.hooks.api.message
 
 import android.text.TextUtils
 import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import h.Hchat.dexkit.DexFinder
 import h.Hchat.hooks.core.HookRegistry
 import h.Hchat.hooks.api.media.WeChatInternalServices
+import h.Hchat.utils.HLog
 import h.Hchat.hooks.api.model.WeChatMessageTypes
 import h.Hchat.utils.KavaReflector
 import java.lang.reflect.Field
@@ -289,7 +289,7 @@ class WeChatLocalMessageApi(
     }
 
     private fun log(message: String) {
-        XposedBridge.log("$TAG $message")
+        HLog.e("$TAG $message")
         logger?.log("[WeChatLocalMessageApi] $message")
     }
 

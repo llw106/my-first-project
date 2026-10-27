@@ -20,7 +20,7 @@ import h.Hchat.hooks.core.DexInstallScheduler;
 import h.Hchat.hooks.core.Feature;
 import h.Hchat.hooks.core.FeatureContext;
 
-import de.robv.android.xposed.XposedBridge;
+import h.Hchat.utils.HLog;
 
 /**
  * 公共微信 API 初始化入口。
@@ -188,7 +188,7 @@ public class WechatApiFeature implements Feature {
 
     private void log(String message) {
         if (isImportantLog(message)) {
-            XposedBridge.log(TAG + " " + message);
+            HLog.e(TAG + " " + message);
         }
     }
 
@@ -196,7 +196,7 @@ public class WechatApiFeature implements Feature {
         try {
             runnable.run();
         } catch (Throwable e) {
-            log(name + " API安装失败: " + e.getMessage());
+            HLog.e(TAG + " " + name + " API安装失败: " + e.getMessage(), e);
         }
     }
 

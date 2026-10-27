@@ -16,8 +16,7 @@ import android.text.style.ReplacementSpan
 import android.view.View
 import android.widget.TextView
 import h.Hchat.hooks.items.membertitle.MemberTitleStore
-import java.util.Collections
-import java.util.WeakHashMap
+import h.Hchat.R
 
 object ChatNameDecorationLayout {
     data class Row(val nameView: TextView) {
@@ -47,35 +46,31 @@ object ChatNameDecorationLayout {
         val weight: Int
     )
 
-    private val rows = Collections.synchronizedMap(WeakHashMap<TextView, Row>())
-    private val states = Collections.synchronizedMap(WeakHashMap<TextView, State>())
+    // 装饰状态只归当前视图所有，回调即使引用本行也不会形成进程级保留链。
+    private data class Decoration(val row: Row, val state: State)
 
     fun current(nameView: TextView): Row? {
-        synchronized(rows) {
-            return rows[nameView]
-        }
+        return (nameView.getTag(R.id.hchat_chat_name_decoration) as? Decoration)?.row
     }
 
     fun ensure(nameView: TextView): Row {
-        synchronized(rows) {
-            rows[nameView]?.let { return it }
-            val row = Row(nameView)
-            rows[nameView] = row
-            states[nameView] = State(baseName = stripInlineDecorations(nameView.text))
-            nameView.setSingleLine(false)
-            nameView.maxLines = Int.MAX_VALUE
-            nameView.ellipsize = null
-            nameView.highlightColor = 0
-            return row
-        }
+        current(nameView)?.let { return it }
+        val row = Row(nameView)
+        nameView.setTag(
+            R.id.hchat_chat_name_decoration,
+            Decoration(row, State(baseName = stripInlineDecorations(nameView.text)))
+        )
+        nameView.setSingleLine(false)
+        nameView.maxLines = Int.MAX_VALUE
+        nameView.ellipsize = null
+        nameView.highlightColor = 0
+        return row
     }
 
     fun displayNameText(nameView: TextView): CharSequence {
-        synchronized(states) {
-            states[nameView]?.let {
-                if (it.lastRendered.isNotEmpty() && nameView.text?.toString() == it.lastRendered) {
-                    return it.baseName
-                }
+        (nameView.getTag(R.id.hchat_chat_name_decoration) as? Decoration)?.state?.let {
+            if (it.lastRendered.isNotEmpty() && nameView.text?.toString() == it.lastRendered) {
+                return it.baseName
             }
         }
         return stripInlineDecorations(nameView.text)
@@ -136,8 +131,11 @@ object ChatNameDecorationLayout {
     }
 
     private fun state(row: Row): State {
-        synchronized(states) {
-            return states.getOrPut(row.nameView) { State(baseName = stripInlineDecorations(row.nameView.text)) }
+        val view = row.nameView
+        val existing = view.getTag(R.id.hchat_chat_name_decoration) as? Decoration
+        if (existing != null) return existing.state
+        return State(baseName = stripInlineDecorations(view.text)).also {
+            view.setTag(R.id.hchat_chat_name_decoration, Decoration(row, it))
         }
     }
 

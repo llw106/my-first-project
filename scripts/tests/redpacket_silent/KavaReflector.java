@@ -7,6 +7,18 @@ import java.lang.reflect.Method;
 // JVM reflection supplies the host boundary; production parsing and selection stay intact.
 public final class KavaReflector {
     public static Method[] declaredMethods(Class<?> type) { return type.getDeclaredMethods(); }
+    public static Class<?> loadClass(String name, ClassLoader loader) {
+        try { return Class.forName(name, false, loader); }
+        catch (ClassNotFoundException error) { throw new IllegalArgumentException(error); }
+    }
+    public static Method findDeclaredMethod(Class<?> type, String name, Class<?>... parameters) {
+        try { return type.getDeclaredMethod(name, parameters); }
+        catch (ReflectiveOperationException error) { throw new IllegalArgumentException(error); }
+    }
+    public static Object readField(Field field, Object target) {
+        try { field.setAccessible(true); return field.get(target); }
+        catch (ReflectiveOperationException error) { throw new IllegalArgumentException(error); }
+    }
     public static Field[] declaredFields(Class<?> type) { return type.getDeclaredFields(); }
     public static Method findMethod(Class<?> type, String name, Class<?>... parameters) {
         try { return type.getMethod(name, parameters); }

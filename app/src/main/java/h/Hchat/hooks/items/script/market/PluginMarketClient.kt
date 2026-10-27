@@ -1,5 +1,6 @@
 package h.Hchat.hooks.items.script.market
 
+import h.Hchat.utils.HchatHttp
 import android.content.Context
 import h.Hchat.utils.HLog
 import okhttp3.HttpUrl
@@ -17,7 +18,7 @@ import java.util.concurrent.TimeUnit
 object PluginMarketClient {
     private const val TAG = "[Hchat:PluginMarket]"
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-    private val httpClient = OkHttpClient.Builder()
+    private val httpClient = HchatHttp.shared.newBuilder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(120, TimeUnit.SECONDS)

@@ -40,8 +40,10 @@ run(java, ['-Xmx256m', '-cp', compiler.join(path.delimiter), 'org.jetbrains.kotl
     production + 'core/RedPacketState.kt']);
 const classpath = [output, state, stdlib, json].join(path.delimiter);
 run(javac, ['-cp', classpath, '-d', output,
-    ...['grab/RedPacketSilentHandler.java', 'detect/RedPacketParser.java',
+    'app/src/main/java/h/Hchat/utils/XmlValueReader.java',
+    ...['grab/RedPacketSilentHandler.java', 'grab/RedPacketUiAutomator.java', 'detect/RedPacketParser.java',
         'detect/RedPacketReflector.java', 'fake/RedPacketFakePacketCompat.java'].map(file => production + file),
     ...fs.readdirSync(path.join(root, tests)).filter(file => file.endsWith('.java')).map(file => tests + file)]);
 run(java, ['-cp', classpath, 'h.Hchat.hooks.items.payment.grab.SilentHandlerRegression']);
+run(java, ['-cp', classpath, 'h.Hchat.hooks.items.payment.grab.UiAutomatorRegression']);
 console.log('Test artifacts: ' + output);

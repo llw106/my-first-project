@@ -99,22 +99,31 @@ public class WeChatNetworkDispatcher {
             try {
                 Object result;
                 if (dispatcherArgCount == 2) {
-                    result = KavaReflector.invoke(dispatcherMethod, dispatcherInstance, realRequest, 0);
+                    result = KavaReflector.invokeOrThrow(dispatcherMethod, dispatcherInstance, realRequest, 0);
                 } else {
-                    result = KavaReflector.invoke(dispatcherMethod, dispatcherInstance, realRequest);
+                    result = KavaReflector.invokeOrThrow(dispatcherMethod, dispatcherInstance, realRequest);
                 }
-                return normalizeSendResult(result);
+                return normalizeSendResult(result, dispatcherMethod);
             } catch (Throwable invokeErr) {
                 try {
+                    Method fallbackMethod = KavaReflector.findCompatibleMethod(
+                            dispatcherInstance.getClass(), dispatcherMethod.getName(),
+                            dispatcherArgCount == 2
+                                    ? new Object[]{realRequest, Integer.valueOf(0)}
+                                    : new Object[]{realRequest});
+                    if (fallbackMethod == null) throw invokeErr;
                     if (dispatcherArgCount == 2) {
-                        Object result = KavaReflector.invokeMethod(dispatcherInstance, dispatcherMethod.getName(), realRequest, 0);
-                        return normalizeSendResult(result);
+                        Object result = KavaReflector.invokeOrThrow(fallbackMethod,
+                                dispatcherInstance, realRequest, 0);
+                        return normalizeSendResult(result, fallbackMethod);
                     } else {
-                        Object result = KavaReflector.invokeMethod(dispatcherInstance, dispatcherMethod.getName(), realRequest);
-                        return normalizeSendResult(result);
+                        Object result = KavaReflector.invokeOrThrow(fallbackMethod,
+                                dispatcherInstance, realRequest);
+                        return normalizeSendResult(result, fallbackMethod);
                     }
                 } catch (Throwable e) {
-                    log("sendNetworkRequest 异常: " + e.getMessage());
+                    log("sendNetworkRequest 异常: " + e.getMessage()
+                            + " method=" + dispatcherMethod.toGenericString());
                 }
             }
         } else {
@@ -124,10 +133,10 @@ public class WeChatNetworkDispatcher {
         return false;
     }
 
-    private boolean normalizeSendResult(Object result) {
+    private boolean normalizeSendResult(Object result, Method method) {
         if (result instanceof Boolean) return (Boolean) result;
         if (result instanceof Number) return ((Number) result).intValue() >= 0;
-        return true;
+        return method != null && method.getReturnType() == void.class;
     }
 
     public boolean isReady() {
@@ -171,7 +180,7 @@ public class WeChatNetworkDispatcher {
     }
 
     private boolean isNetworkRequestType(Class<?> type) {
-        if (type == null || type.isPrimitive() || type.isInterface()) return false;
+        if (type == null || type.isPrimitive()) return false;
         Method getType = KavaReflector.findMethodRecursive(type, "getType");
         return getType != null
                 && getType.getParameterTypes().length == 0

@@ -42,12 +42,29 @@ public class SettingsDexFinder {
     private static final String CACHE_PREFS = "Hchat_settings_dex_cache";
     private static final String CACHE_COMPLETE = "cache.complete";
     private static final String CACHE_KEY = "cache.key";
+    private static final String CACHE_CORE_COMPLETE = "cache.core.complete";
+    private static final String CACHE_PLUS_COMPLETE = "cache.plus.complete";
     private static final boolean VERBOSE = false;
 
     private final DexKitBridge dexKit;
     private final ClassLoader classLoader;
     private final SharedPreferences cachePrefs;
     private final String runtimeCacheKey;
+    private boolean resolutionFailed;
+
+    private static final String[] CORE_CACHE_FIELDS = {
+            "preferenceClass", "iconPreferenceClass", "methodSetKey", "methodSetTitle",
+            "methodGetKey", "methodAddPref", "settingItemClassesProviderClass",
+            "baseSettingItemClass", "settingLocationClass", "settingGroupMainClass",
+            "settingGroupAccountInfoClass", "settingGroupPersonalInfoClass",
+            "settingAdditionHeaderSearchClass", "baseSettingPrefUIClass",
+            "baseSettingUIClass", "mainSettingsUIClass", "methodAccountInfoReturns1",
+            "methodAccountInfoSettingKey", "settingsUIClass"
+    };
+    private static final String[] PLUS_CACHE_FIELDS = {
+            "plusSubMenuHelperClass", "plusSubMenuAdapterMethod",
+            "plusSubMenuOnItemClickMethod"
+    };
 
     // ===== 旧版 Preference 框架 =====
     public Class<?> preferenceClass;
@@ -95,15 +112,18 @@ public class SettingsDexFinder {
     }
 
     public void resolveAll(boolean includePlusMenu) {
-        if (loadCache()) {
-            resolveMissingTargets(includePlusMenu);
-            saveCache();
-            logDetail("设置Dex 命中缓存: " + shortKey(runtimeCacheKey));
-            return;
+        boolean coreReady = loadCache(false);
+        if (!coreReady) {
+            resolutionFailed = false;
+            resolveMissingTargets(false);
+            if (!resolutionFailed) saveCache(false);
         }
-        resolveMissingTargets(includePlusMenu);
-        saveCache();
-        logDetail("全部解析完成");
+        if (includePlusMenu && !loadCache(true)) {
+            resolutionFailed = false;
+            resolvePlusSubMenuHelper();
+            if (!resolutionFailed) saveCache(true);
+        }
+        logDetail("设置Dex 缓存处理完成: " + shortKey(runtimeCacheKey));
     }
 
     private void resolveMissingTargets(boolean includePlusMenu) {
@@ -163,6 +183,7 @@ public class SettingsDexFinder {
                 break;
             }
         } catch (Throwable e) {
+            resolutionFailed = true;
             h.Hchat.utils.HLog.e(TAG + " setKey 失败: " + e.getMessage(), e);
         }
     }
@@ -199,6 +220,7 @@ public class SettingsDexFinder {
                 }
             }
         } catch (Throwable e) {
+            resolutionFailed = true;
             h.Hchat.utils.HLog.e(TAG + " setTitle 失败: " + e.getMessage(), e);
         }
     }
@@ -224,6 +246,7 @@ public class SettingsDexFinder {
                 }
             }
         } catch (Throwable e) {
+            resolutionFailed = true;
             h.Hchat.utils.HLog.e(TAG + " getKey 失败: " + e.getMessage(), e);
         }
     }
@@ -301,6 +324,7 @@ public class SettingsDexFinder {
                 } catch (Throwable ignored) {}
             }
         } catch (Throwable e) {
+            resolutionFailed = true;
             h.Hchat.utils.HLog.e(TAG + " addPreference 失败: " + e.getMessage(), e);
         }
     }
@@ -385,6 +409,7 @@ public class SettingsDexFinder {
                         + settingItemClassesProviderClass.getName());
             }
         } catch (Throwable e) {
+            resolutionFailed = true;
             h.Hchat.utils.HLog.e(TAG + " SettingItemClassesProvider 失败: " + e.getMessage(), e);
         }
     }
@@ -434,6 +459,7 @@ public class SettingsDexFinder {
                 logDetail("BaseSettingItem: " + baseSettingItemClass.getName());
             }
         } catch (Throwable e) {
+            resolutionFailed = true;
             h.Hchat.utils.HLog.e(TAG + " BaseSettingItem 失败: " + e.getMessage(), e);
         }
     }
@@ -503,6 +529,7 @@ public class SettingsDexFinder {
                 break;
             }
         } catch (Throwable e) {
+            resolutionFailed = true;
             h.Hchat.utils.HLog.e(TAG + " SettingLocation 失败: " + e.getMessage(), e);
         }
     }
@@ -526,6 +553,7 @@ public class SettingsDexFinder {
                 break;
             }
         } catch (Throwable e) {
+            resolutionFailed = true;
             h.Hchat.utils.HLog.e(TAG + " AccountInfo.returns1 失败: " + e.getMessage(), e);
         }
     }
@@ -550,6 +578,7 @@ public class SettingsDexFinder {
                 break;
             }
         } catch (Throwable e) {
+            resolutionFailed = true;
             h.Hchat.utils.HLog.e(TAG + " AccountInfo.settingKey 失败: " + e.getMessage(), e);
         }
     }
@@ -614,6 +643,7 @@ public class SettingsDexFinder {
             }
             logDetail("PlusSubMenuHelper 未找到");
         } catch (Throwable e) {
+            resolutionFailed = true;
             h.Hchat.utils.HLog.e(TAG + " PlusSubMenuHelper 失败: " + e.getMessage(), e);
         }
     }
@@ -660,105 +690,139 @@ public class SettingsDexFinder {
         }
     }
 
-    private boolean loadCache() {
+    private boolean loadCache(boolean includePlusMenu) {
         if (cachePrefs == null || runtimeCacheKey == null || runtimeCacheKey.length() == 0) return false;
         try {
-            if (!cachePrefs.getBoolean(CACHE_COMPLETE, false)) return false;
             String savedKey = cachePrefs.getString(CACHE_KEY, "");
-            if (!runtimeCacheKey.equals(savedKey)) {
+            if (!DexCacheIdentity.sameRuntime(savedKey, runtimeCacheKey)) {
                 resetCacheForRuntimeKey();
                 return false;
             }
-
-            preferenceClass = loadClass("preferenceClass");
-            iconPreferenceClass = loadClass("iconPreferenceClass");
-            methodSetKey = loadMethod("methodSetKey");
-            methodSetTitle = loadMethod("methodSetTitle");
-            methodGetKey = loadMethod("methodGetKey");
-            methodAddPref = loadMethod("methodAddPref");
-            settingItemClassesProviderClass = loadClass("settingItemClassesProviderClass");
-            baseSettingItemClass = loadClass("baseSettingItemClass");
-            settingLocationClass = loadClass("settingLocationClass");
-            settingGroupMainClass = loadClass("settingGroupMainClass");
-            settingGroupAccountInfoClass = loadClass("settingGroupAccountInfoClass");
-            settingGroupPersonalInfoClass = loadClass("settingGroupPersonalInfoClass");
-            settingAdditionHeaderSearchClass = loadClass("settingAdditionHeaderSearchClass");
-            baseSettingPrefUIClass = loadClass("baseSettingPrefUIClass");
-            baseSettingUIClass = loadClass("baseSettingUIClass");
-            mainSettingsUIClass = loadClass("mainSettingsUIClass");
-            methodAccountInfoReturns1 = loadMethod("methodAccountInfoReturns1");
-            methodAccountInfoSettingKey = loadMethod("methodAccountInfoSettingKey");
-            plusSubMenuHelperClass = loadClass("plusSubMenuHelperClass");
-            plusSubMenuAdapterMethod = loadMethod("plusSubMenuAdapterMethod");
-            plusSubMenuOnItemClickMethod = loadMethod("plusSubMenuOnItemClickMethod");
-            settingsUIClass = loadClass("settingsUIClass");
-            return isCacheUsable();
+            boolean coreComplete = cachePrefs.getBoolean(CACHE_CORE_COMPLETE,
+                    cachePrefs.getBoolean(CACHE_COMPLETE, false));
+            boolean plusComplete = cachePrefs.getBoolean(CACHE_PLUS_COMPLETE,
+                    cachePrefs.getBoolean(CACHE_COMPLETE, false));
+            loadAllCachedTargets();
+            if (!coreComplete || !cacheFieldsValid(CORE_CACHE_FIELDS)) return false;
+            return !includePlusMenu || (plusComplete && cacheFieldsValid(PLUS_CACHE_FIELDS));
         } catch (Throwable e) {
             logDetail("读取设置Dex缓存失败: " + e.getMessage());
             return false;
         }
     }
 
-    private boolean isCacheUsable() {
-        return preferenceClass != null
-                || methodSetKey != null
-                || methodSetTitle != null
-                || methodGetKey != null
-                || methodAddPref != null
-                || settingItemClassesProviderClass != null
-                || baseSettingItemClass != null
-                || settingLocationClass != null
-                || settingGroupMainClass != null
-                || settingGroupAccountInfoClass != null
-                || settingGroupPersonalInfoClass != null
-                || settingAdditionHeaderSearchClass != null
-                || baseSettingPrefUIClass != null
-                || baseSettingUIClass != null
-                || mainSettingsUIClass != null
-                || plusSubMenuHelperClass != null
-                || plusSubMenuAdapterMethod != null
-                || plusSubMenuOnItemClickMethod != null
-                || settingsUIClass != null;
+    private void loadAllCachedTargets() {
+        preferenceClass = loadClass("preferenceClass");
+        iconPreferenceClass = loadClass("iconPreferenceClass");
+        methodSetKey = loadMethod("methodSetKey");
+        methodSetTitle = loadMethod("methodSetTitle");
+        methodGetKey = loadMethod("methodGetKey");
+        methodAddPref = loadMethod("methodAddPref");
+        settingItemClassesProviderClass = loadClass("settingItemClassesProviderClass");
+        baseSettingItemClass = loadClass("baseSettingItemClass");
+        settingLocationClass = loadClass("settingLocationClass");
+        settingGroupMainClass = loadClass("settingGroupMainClass");
+        settingGroupAccountInfoClass = loadClass("settingGroupAccountInfoClass");
+        settingGroupPersonalInfoClass = loadClass("settingGroupPersonalInfoClass");
+        settingAdditionHeaderSearchClass = loadClass("settingAdditionHeaderSearchClass");
+        baseSettingPrefUIClass = loadClass("baseSettingPrefUIClass");
+        baseSettingUIClass = loadClass("baseSettingUIClass");
+        mainSettingsUIClass = loadClass("mainSettingsUIClass");
+        methodAccountInfoReturns1 = loadMethod("methodAccountInfoReturns1");
+        methodAccountInfoSettingKey = loadMethod("methodAccountInfoSettingKey");
+        plusSubMenuHelperClass = loadClass("plusSubMenuHelperClass");
+        plusSubMenuAdapterMethod = loadMethod("plusSubMenuAdapterMethod");
+        plusSubMenuOnItemClickMethod = loadMethod("plusSubMenuOnItemClickMethod");
+        settingsUIClass = loadClass("settingsUIClass");
+    }
+
+    private boolean cacheFieldsValid(String[] fields) {
+        for (String key : fields) {
+            String value = cachePrefs.getString(key, null);
+            if (value == null) return false;
+            if (!value.isEmpty() && cachedTarget(key) == null) return false;
+        }
+        return true;
+    }
+
+    private Object cachedTarget(String key) {
+        if ("preferenceClass".equals(key)) return preferenceClass;
+        if ("iconPreferenceClass".equals(key)) return iconPreferenceClass;
+        if ("methodSetKey".equals(key)) return methodSetKey;
+        if ("methodSetTitle".equals(key)) return methodSetTitle;
+        if ("methodGetKey".equals(key)) return methodGetKey;
+        if ("methodAddPref".equals(key)) return methodAddPref;
+        if ("settingItemClassesProviderClass".equals(key)) return settingItemClassesProviderClass;
+        if ("baseSettingItemClass".equals(key)) return baseSettingItemClass;
+        if ("settingLocationClass".equals(key)) return settingLocationClass;
+        if ("settingGroupMainClass".equals(key)) return settingGroupMainClass;
+        if ("settingGroupAccountInfoClass".equals(key)) return settingGroupAccountInfoClass;
+        if ("settingGroupPersonalInfoClass".equals(key)) return settingGroupPersonalInfoClass;
+        if ("settingAdditionHeaderSearchClass".equals(key)) return settingAdditionHeaderSearchClass;
+        if ("baseSettingPrefUIClass".equals(key)) return baseSettingPrefUIClass;
+        if ("baseSettingUIClass".equals(key)) return baseSettingUIClass;
+        if ("mainSettingsUIClass".equals(key)) return mainSettingsUIClass;
+        if ("methodAccountInfoReturns1".equals(key)) return methodAccountInfoReturns1;
+        if ("methodAccountInfoSettingKey".equals(key)) return methodAccountInfoSettingKey;
+        if ("plusSubMenuHelperClass".equals(key)) return plusSubMenuHelperClass;
+        if ("plusSubMenuAdapterMethod".equals(key)) return plusSubMenuAdapterMethod;
+        if ("plusSubMenuOnItemClickMethod".equals(key)) return plusSubMenuOnItemClickMethod;
+        if ("settingsUIClass".equals(key)) return settingsUIClass;
+        return null;
     }
 
     private void resetCacheForRuntimeKey() {
         try {
-            cachePrefs.edit()
-                    .clear()
-                    .putString(CACHE_KEY, runtimeCacheKey)
-                    .commit();
+            cachePrefs.edit().clear().putString(CACHE_KEY, runtimeCacheKey).commit();
         } catch (Throwable ignored) {
         }
     }
 
-    private void saveCache() {
+    private void saveCache(boolean plusOnly) {
         if (cachePrefs == null || runtimeCacheKey == null || runtimeCacheKey.length() == 0) return;
         try {
-            SharedPreferences.Editor editor = cachePrefs.edit().clear();
-            editor.putString(CACHE_KEY, runtimeCacheKey);
-            putClass(editor, "preferenceClass", preferenceClass);
-            putClass(editor, "iconPreferenceClass", iconPreferenceClass);
-            putMethod(editor, "methodSetKey", methodSetKey);
-            putMethod(editor, "methodSetTitle", methodSetTitle);
-            putMethod(editor, "methodGetKey", methodGetKey);
-            putMethod(editor, "methodAddPref", methodAddPref);
-            putClass(editor, "settingItemClassesProviderClass", settingItemClassesProviderClass);
-            putClass(editor, "baseSettingItemClass", baseSettingItemClass);
-            putClass(editor, "settingLocationClass", settingLocationClass);
-            putClass(editor, "settingGroupMainClass", settingGroupMainClass);
-            putClass(editor, "settingGroupAccountInfoClass", settingGroupAccountInfoClass);
-            putClass(editor, "settingGroupPersonalInfoClass", settingGroupPersonalInfoClass);
-            putClass(editor, "settingAdditionHeaderSearchClass", settingAdditionHeaderSearchClass);
-            putClass(editor, "baseSettingPrefUIClass", baseSettingPrefUIClass);
-            putClass(editor, "baseSettingUIClass", baseSettingUIClass);
-            putClass(editor, "mainSettingsUIClass", mainSettingsUIClass);
-            putMethod(editor, "methodAccountInfoReturns1", methodAccountInfoReturns1);
-            putMethod(editor, "methodAccountInfoSettingKey", methodAccountInfoSettingKey);
-            putClass(editor, "plusSubMenuHelperClass", plusSubMenuHelperClass);
-            putMethod(editor, "plusSubMenuAdapterMethod", plusSubMenuAdapterMethod);
-            putMethod(editor, "plusSubMenuOnItemClickMethod", plusSubMenuOnItemClickMethod);
-            putClass(editor, "settingsUIClass", settingsUIClass);
-            editor.putBoolean(CACHE_COMPLETE, true);
+            String savedKey = cachePrefs.getString(CACHE_KEY, "");
+            SharedPreferences.Editor editor = cachePrefs.edit();
+            if (!DexCacheIdentity.sameRuntime(savedKey, runtimeCacheKey)) {
+                editor.clear();
+            }
+            if (savedKey == null || savedKey.isEmpty() || !DexCacheIdentity.sameRuntime(savedKey, runtimeCacheKey)) {
+                editor.putString(CACHE_KEY, runtimeCacheKey);
+            }
+            if (!plusOnly) {
+                putClass(editor, "preferenceClass", preferenceClass);
+                putClass(editor, "iconPreferenceClass", iconPreferenceClass);
+                putMethod(editor, "methodSetKey", methodSetKey);
+                putMethod(editor, "methodSetTitle", methodSetTitle);
+                putMethod(editor, "methodGetKey", methodGetKey);
+                putMethod(editor, "methodAddPref", methodAddPref);
+                putClass(editor, "settingItemClassesProviderClass", settingItemClassesProviderClass);
+                putClass(editor, "baseSettingItemClass", baseSettingItemClass);
+                putClass(editor, "settingLocationClass", settingLocationClass);
+                putClass(editor, "settingGroupMainClass", settingGroupMainClass);
+                putClass(editor, "settingGroupAccountInfoClass", settingGroupAccountInfoClass);
+                putClass(editor, "settingGroupPersonalInfoClass", settingGroupPersonalInfoClass);
+                putClass(editor, "settingAdditionHeaderSearchClass", settingAdditionHeaderSearchClass);
+                putClass(editor, "baseSettingPrefUIClass", baseSettingPrefUIClass);
+                putClass(editor, "baseSettingUIClass", baseSettingUIClass);
+                putClass(editor, "mainSettingsUIClass", mainSettingsUIClass);
+                putMethod(editor, "methodAccountInfoReturns1", methodAccountInfoReturns1);
+                putMethod(editor, "methodAccountInfoSettingKey", methodAccountInfoSettingKey);
+                putClass(editor, "settingsUIClass", settingsUIClass);
+            }
+            if (plusOnly) {
+                putClass(editor, "plusSubMenuHelperClass", plusSubMenuHelperClass);
+                putMethod(editor, "plusSubMenuAdapterMethod", plusSubMenuAdapterMethod);
+                putMethod(editor, "plusSubMenuOnItemClickMethod", plusSubMenuOnItemClickMethod);
+            }
+            boolean coreComplete = plusOnly
+                    ? cachePrefs.getBoolean(CACHE_CORE_COMPLETE, false)
+                    : true;
+            boolean plusComplete = plusOnly
+                    ? true
+                    : cachePrefs.getBoolean(CACHE_PLUS_COMPLETE, false);
+            editor.putBoolean(plusOnly ? CACHE_PLUS_COMPLETE : CACHE_CORE_COMPLETE, true);
+            editor.putBoolean(CACHE_COMPLETE, coreComplete && plusComplete);
             editor.apply();
         } catch (Throwable e) {
             logDetail("保存设置Dex缓存失败: " + e.getMessage());

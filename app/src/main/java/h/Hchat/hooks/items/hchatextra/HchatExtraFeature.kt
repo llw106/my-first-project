@@ -3064,28 +3064,36 @@ private class HchatExtraHooker(
 
     private fun wrapCardDetailsAnchor(anchor: BottomDetailsAnchor): BottomDetailsAnchor {
         val content = anchor.layoutView
-        if (content is LinearLayout && content.tag == "hchat_card_details_column") {
+        if (content is ViewGroup && content.tag == "hchat_card_details_column") {
             val card = content.getChildAt(0) ?: return anchor
             return BottomDetailsAnchor(content, card, card)
         }
-        (content.parent as? LinearLayout)?.takeIf { it.tag == "hchat_card_details_column" }?.let {
+        (content.parent as? ViewGroup)?.takeIf { it.tag == "hchat_card_details_column" }?.let {
             return BottomDetailsAnchor(it, content, content)
         }
         val parent = content.parent as? ViewGroup ?: return anchor
         val index = parent.indexOfChild(content)
         if (index < 0) return anchor
         val outerParams = content.layoutParams ?: return anchor
-        val column = LinearLayout(content.context).apply {
-            orientation = LinearLayout.VERTICAL
-            tag = "hchat_card_details_column"
-            clipChildren = false
-        }
-        // 原卡片保持其 ID、背景和 holder 引用；外部参数交给纵向容器。
         val width = outerParams.width
         val height = outerParams.height.takeIf { it >= 0 } ?: ViewGroup.LayoutParams.WRAP_CONTENT
         outerParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+        // 新容器必须与原父容器同类：微信之后会把这些视图的布局参数强转成固定类型，换了父容器类型就会崩。
+        val column: ViewGroup = when (parent) {
+            is RelativeLayout -> RelativeLayout(content.context).apply { clipChildren = false }
+            is LinearLayout -> LinearLayout(content.context).apply {
+                orientation = LinearLayout.VERTICAL
+                clipChildren = false
+            }
+            else -> return anchor
+        }
+        column.tag = "hchat_card_details_column"
+        val innerParams: ViewGroup.LayoutParams = when (column) {
+            is RelativeLayout -> RelativeLayout.LayoutParams(width, height)
+            else -> LinearLayout.LayoutParams(width, height)
+        }
         parent.removeViewAt(index)
-        column.addView(content, LinearLayout.LayoutParams(width, height))
+        column.addView(content, innerParams)
         parent.addView(column, index, outerParams)
         return BottomDetailsAnchor(column, content, content)
     }

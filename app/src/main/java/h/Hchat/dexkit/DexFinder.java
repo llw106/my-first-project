@@ -41,12 +41,25 @@ public class DexFinder {
     private static final String CACHE_PREFS = "Hchat_dex_cache";
     private static final String CACHE_COMPLETE = "cache.complete";
     private static final String CACHE_KEY = "cache.key";
+    private static final String CACHE_SNAPSHOT_VERSION_KEY = "cache.snapshot.version";
+    private static final String CACHE_SNAPSHOT_VERSION = "2";
+    private static final String LOCATOR_WISH_COMPLETE = "locator.wish.complete";
+    private static final String LOCATOR_PACKET_COMPLETE = "locator.packet.complete";
+    private static final String LOCATOR_ECS_COMPLETE = "locator.ecs.complete";
+    private static final String LOCATOR_MSG_DESC_COMPLETE = "locator.msg.desc.complete";
+    private static final String LOCATOR_PROTOBUF_COMPLETE = "locator.protobuf.complete";
+    private static final String RED_PACKET_UNION_LOCATOR_VERSION_KEY = "redpacket.union.locator.version";
+    private static final String RED_PACKET_UNION_LOCATOR_VERSION = "1";
+    private static final String NETWORK_QUEUE_LOCATOR_VERSION_KEY = "network.queue.locator.version";
+    private static final String NETWORK_QUEUE_LOCATOR_VERSION = "2";
     private static final boolean VERBOSE = false;
     private final DexKitBridge dexKit;
     private final ClassLoader classLoader;
     private final SharedPreferences cachePrefs;
     private final String runtimeCacheKey;
     private boolean resolvedAll;
+    private boolean cacheLoadAttempted;
+    private boolean cacheDescriptorInvalid;
 
     // AddMsg 处理类
     public List<Class<?>> addMsgClasses = new ArrayList<>();
@@ -90,6 +103,10 @@ public class DexFinder {
     public Constructor<?> sendTextMsgCtorObject;
     // 微信服务容器
     public Method serviceGetterMethod;
+    // ECS 礼物静默处理
+    public Class<?> ecsGiftTaskClass;
+    public Class<?> ecsGiftServiceClass;
+    public Class<?> ecsGiftMsgClass;
     public List<Method> getContactAddMethods = new ArrayList<>();
     public List<Method> getContactServiceGetters = new ArrayList<>();
     // 图片发送高层入口
@@ -239,6 +256,15 @@ public class DexFinder {
     // 脚本发送按钮 hook
     public Method chatFooterSendClickMethod;
 
+    private boolean receiveUnionLocatorResolved;
+    private boolean openUnionLocatorResolved;
+    private boolean networkQueueLocatorResolved;
+    private boolean wishLocatorResolved;
+    private boolean packetCompatLocatorResolved;
+    private boolean ecsGiftLocatorResolved;
+    private boolean msgDescLocatorResolved;
+    private boolean protobufLocatorResolved;
+
     public DexFinder(DexKitBridge dexKit, ClassLoader classLoader) {
         this(dexKit, classLoader, null);
     }
@@ -257,46 +283,15 @@ public class DexFinder {
             logDetail("resolveAll 已完成，跳过重复解析");
             return;
         }
+        receiveUnionLocatorResolved = false;
+        openUnionLocatorResolved = false;
+        networkQueueLocatorResolved = false;
         if (loadCache()) {
-            resolveServiceManagerApi();
-            resolveGetContactServiceApi();
-            resolveDatabaseApi();
-            resolveConversationDeleteApi();
-            resolveMessageClearApi();
-            resolveConversationMuteApi();
-            resolveGroupMemberDisplayName();
-            resolveSendImageApi();
-            resolveImageCdnDownloadApi();
-            resolveSendFileApi();
-            resolveSendXmlApi();
-            resolveGroupSolitaireApi();
-            resolveLocalMessageApi();
-            resolveSendVideoTaskApi();
-            resolveVideoPathApi();
-            resolveVideoInfoApi();
-            resolveSendVoiceApi();
-            resolveSendEmojiApi();
-            resolveFavoriteApi();
-            resolveTransferOperationApi();
-            resolveTransferQueryApi();
-            resolveVerifyUserApi();
-            resolveContactCardApi();
-            resolvePatMessageApi();
-            resolveProtobufPacketApi();
-            resolveAddChatroomMemberApi();
-            resolveInviteChatroomMemberApi();
-            resolveDelChatroomMemberApi();
-            resolveRevokeMsgApi();
-            resolveUploadDeviceStepApi();
-            resolveContactLabelNetworkApi();
-            resolveSnsUploadApi();
-            resolveChatPageApi();
-            resolveScriptSendHookApi();
-            saveCache();
             resolvedAll = true;
             logDetail("命中缓存: " + shortKey(runtimeCacheKey));
             return;
         }
+        cacheDescriptorInvalid = false;
         resolveAddMsgClasses();
         resolveReceiveLuckyMoney();
         resolveOpenLuckyMoney();
@@ -338,6 +333,7 @@ public class DexFinder {
         resolveWishWxHb();
         resolvePacketCompatClasses();
         resolveProtobufPacketApi();
+        resolveEcsGiftApi();
         logMissingCritical();
         saveCache();
         resolvedAll = true;
@@ -447,33 +443,43 @@ public class DexFinder {
                 }
             }
 
-            // Union
-            List<MethodData> unionMethods = dexKit.findMethod(
-                    mkMethodUsingStrings("receiveunion"));
-            Class<?> fallbackUnionReceiveClass = null;
-            for (MethodData m : unionMethods) {
-                try {
-                    Class<?> cl = KavaReflector.loadClass(m.getClassName(), classLoader);
-                    if (fallbackUnionReceiveClass == null) fallbackUnionReceiveClass = cl;
-                    Constructor<?> ctor = findCtorByArgCount(cl, 6);
-                    if (ctor != null) {
-                        receiveLuckyMoneyUnionClass = cl;
-                        unionReceiveCtor = ctor;
-                        break;
-                    }
-                } catch (Throwable ignored) {}
-            }
-            if (receiveLuckyMoneyUnionClass == null) {
-                receiveLuckyMoneyUnionClass = fallbackUnionReceiveClass;
-                if (receiveLuckyMoneyUnionClass != null) {
-                    unionReceiveCtor = findCtorByArgCount(receiveLuckyMoneyUnionClass, 6);
-                }
-            }
+            resolveReceiveLuckyMoneyUnion();
 
             logDetail("收红包类: " +
-                    (receiveLuckyMoneyClass != null ? receiveLuckyMoneyClass.getName() : "null"));
+                    (receiveLuckyMoneyClass != null ? receiveLuckyMoneyClass.getName() : "null")
+                    + " Union=" + (receiveLuckyMoneyUnionClass != null
+                    ? receiveLuckyMoneyUnionClass.getName() : "null"));
         } catch (Throwable e) {
             h.Hchat.utils.HLog.e(TAG + " resolveReceive 失败: " + e.getMessage(), e);
+        }
+    }
+
+    private boolean resolveReceiveLuckyMoneyUnion() {
+        receiveLuckyMoneyUnionClass = null;
+        unionReceiveCtor = null;
+        receiveUnionLocatorResolved = false;
+        try {
+            List<ClassData> classes = dexKit.findClass(mkClassUsingStrings(
+                    "MicroMsg.NetSceneReceiveLuckyMoneyUnion", "union_source"));
+            for (ClassData cd : classes) {
+                try {
+                    Class<?> clazz = KavaReflector.loadClass(cd.getName(), classLoader);
+                    Constructor<?> ctor = findCtorByArgCount(clazz, 6);
+                    if (ctor == null) continue;
+                    receiveLuckyMoneyUnionClass = clazz;
+                    unionReceiveCtor = ctor;
+                    break;
+                } catch (Throwable ignored) {}
+            }
+            receiveUnionLocatorResolved = receiveLuckyMoneyUnionClass != null
+                    && unionReceiveCtor != null;
+            logDetail("Union收红包类: " + (receiveLuckyMoneyUnionClass != null
+                    ? receiveLuckyMoneyUnionClass.getName() : "null")
+                    + " ctor6=" + (unionReceiveCtor != null));
+            return receiveUnionLocatorResolved;
+        } catch (Throwable e) {
+            h.Hchat.utils.HLog.e(TAG + " resolveReceiveUnion 失败: " + e.getMessage(), e);
+            return false;
         }
     }
 
@@ -520,58 +526,81 @@ public class DexFinder {
                 }
             }
 
-            // Union
-            List<MethodData> unionMethods = dexKit.findMethod(
-                    mkMethodUsingStrings("openluckyunion"));
-            Class<?> fallbackUnionOpenClass = null;
-            for (MethodData m : unionMethods) {
-                try {
-                    Class<?> cl = KavaReflector.loadClass(m.getClassName(), classLoader);
-                    if (fallbackUnionOpenClass == null) fallbackUnionOpenClass = cl;
-                    Constructor<?> c10 = findCtorByArgCount(cl, 10);
-                    Constructor<?> c9 = findCtorByArgCount(cl, 9);
-                    if (c10 != null || c9 != null) {
-                        openLuckyMoneyUnionClass = cl;
-                        unionOpenCtor10 = c10;
-                        unionOpenCtor9 = c9;
-                        break;
-                    }
-                } catch (Throwable ignored) {}
-            }
-
-            if (openLuckyMoneyUnionClass == null) {
-                openLuckyMoneyUnionClass = fallbackUnionOpenClass;
-            }
-            if (openLuckyMoneyUnionClass != null && unionOpenCtor10 == null && unionOpenCtor9 == null) {
-                unionOpenCtor10 = findCtorByArgCount(openLuckyMoneyUnionClass, 10);
-                unionOpenCtor9 = findCtorByArgCount(openLuckyMoneyUnionClass, 9);
-            }
+            resolveOpenLuckyMoneyUnion();
 
             logDetail("拆红包类: " +
-                    (openLuckyMoneyClass != null ? openLuckyMoneyClass.getName() : "null"));
+                    (openLuckyMoneyClass != null ? openLuckyMoneyClass.getName() : "null")
+                    + " Union=" + (openLuckyMoneyUnionClass != null
+                    ? openLuckyMoneyUnionClass.getName() : "null"));
         } catch (Throwable e) {
             h.Hchat.utils.HLog.e(TAG + " resolveOpen 失败: " + e.getMessage(), e);
         }
     }
 
+    private boolean resolveOpenLuckyMoneyUnion() {
+        openLuckyMoneyUnionClass = null;
+        unionOpenCtor10 = null;
+        unionOpenCtor9 = null;
+        openUnionLocatorResolved = false;
+        try {
+            List<ClassData> classes = dexKit.findClass(mkClassUsingStrings(
+                    "MicroMsg.NetSceneOpenLuckyMoneyUnion", "union_source"));
+            for (ClassData cd : classes) {
+                try {
+                    Class<?> clazz = KavaReflector.loadClass(cd.getName(), classLoader);
+                    Constructor<?> ctor10 = findCtorByArgCount(clazz, 10);
+                    Constructor<?> ctor9 = findCtorByArgCount(clazz, 9);
+                    if (ctor10 == null && ctor9 == null) continue;
+                    openLuckyMoneyUnionClass = clazz;
+                    unionOpenCtor10 = ctor10;
+                    unionOpenCtor9 = ctor9;
+                    break;
+                } catch (Throwable ignored) {}
+            }
+            openUnionLocatorResolved = openLuckyMoneyUnionClass != null
+                    && (unionOpenCtor10 != null || unionOpenCtor9 != null);
+            logDetail("Union拆红包类: " + (openLuckyMoneyUnionClass != null
+                    ? openLuckyMoneyUnionClass.getName() : "null")
+                    + " ctor10=" + (unionOpenCtor10 != null)
+                    + " ctor9=" + (unionOpenCtor9 != null));
+            return openUnionLocatorResolved;
+        } catch (Throwable e) {
+            h.Hchat.utils.HLog.e(TAG + " resolveOpenUnion 失败: " + e.getMessage(), e);
+            return false;
+        }
+    }
+
     // ============ 网络队列 ============
     private void resolveNetworkQueue() {
+        netQueueClass = null;
+        netQueueCandidateClasses.clear();
+        networkQueueLocatorResolved = false;
         try {
             collectKnownNetworkQueueClasses();
+
+            // 先按真实红包请求类型筛选，避免 doSceneImp 的普通业务类抢到首位。
+            collectNetworkQueueClassesByAnchors();
+            for (Class<?> candidate : netQueueCandidateClasses) {
+                if (hasQueueSendMethodForRequests(candidate)) {
+                    netQueueClass = candidate;
+                    break;
+                }
+            }
 
             // 策略1: 搜索 doSceneImp 字符串，找到包含 dispatch 方法的类
             List<MethodData> methods = dexKit.findMethod(
                     mkMethodUsingStrings("doSceneImp"));
-            for (MethodData m : methods) {
-                try {
-                    Class<?> cl = KavaReflector.loadClass(m.getClassName(), classLoader);
-                    addNetQueueCandidate(cl);
-                    if (hasLikelyQueueSendMethod(cl)) {
-                        netQueueClass = cl;
-                        break;
-                    }
-                    if (netQueueClass != null) break;
-                } catch (Throwable ignored) {}
+            if (netQueueClass == null) {
+                for (MethodData m : methods) {
+                    try {
+                        Class<?> cl = KavaReflector.loadClass(m.getClassName(), classLoader);
+                        addNetQueueCandidate(cl);
+                        if (hasQueueSendMethodForRequests(cl)) {
+                            netQueueClass = cl;
+                            break;
+                        }
+                    } catch (Throwable ignored) {}
+                }
             }
 
             // 策略2: 如果没找到直接发包方法，继续收集候选，后面再统一筛选。
@@ -584,11 +613,13 @@ public class DexFinder {
                 }
             }
 
-            collectNetworkQueueClassesByAnchors();
-            if (netQueueClass == null || !hasLikelyQueueSendMethod(netQueueClass)) {
+            if (netQueueClass == null || !hasQueueSendMethodForRequests(netQueueClass)) {
                 Class<?> sendClass = findFirstLikelyQueueClass();
                 if (sendClass != null) netQueueClass = sendClass;
             }
+
+            networkQueueLocatorResolved = netQueueClass != null
+                    && hasQueueSendMethodForRequests(netQueueClass);
 
             logDetail("网络队列类: " +
                     (netQueueClass != null ? netQueueClass.getName() : "null")
@@ -600,6 +631,11 @@ public class DexFinder {
 
     // ============ 祝福语 ============
     private void resolveWishWxHb() {
+        if (wishLocatorResolved) return;
+        if (wishWxHbClass != null) {
+            wishLocatorResolved = true;
+            return;
+        }
         try {
             String[][] anchors = {
                     {"/cgi-bin/mmpay-bin/wishwxhb"},
@@ -623,6 +659,7 @@ public class DexFinder {
             }
             logDetail("祝福语类: " +
                     (wishWxHbClass != null ? wishWxHbClass.getName() : "null"));
+            wishLocatorResolved = true;
         } catch (Throwable e) {
             h.Hchat.utils.HLog.e(TAG + " resolveWish 失败: " + e.getMessage(), e);
         }
@@ -630,6 +667,7 @@ public class DexFinder {
 
     // ============ 文本消息发送 ============
     public void resolveServiceManagerApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isServiceGetterMethod(serviceGetterMethod)) return;
             List<MethodData> methods = dexKit.findMethod(
@@ -650,6 +688,7 @@ public class DexFinder {
     }
 
     public void resolveSendTextMsg() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (sendTextMsgClass != null
                     && (sendTextMsgCtorLong != null || sendTextMsgCtorObject != null)) {
@@ -694,6 +733,7 @@ public class DexFinder {
     }
 
     public void resolveGetContactServiceApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (getContactAddMethods.isEmpty()) {
                 collectGetContactAddMethods("dkverify add Contact");
@@ -758,6 +798,7 @@ public class DexFinder {
 
     // ============ 图片消息发送 ============
     public void resolveSendImageApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isSendImageAppInfoMethod(sendImageMethod)) {
                 resolveSendImageAsyncAppInfoApi();
@@ -797,6 +838,7 @@ public class DexFinder {
     }
 
     public void resolveImageCdnDownloadApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             resolveMarsCdnDownloadApi();
             if (isImageCdnTaskClass(imageCdnTaskClass)
@@ -1180,6 +1222,7 @@ public class DexFinder {
     }
 
     public void resolveSendFileApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isSendFileAppMsgMethod(sendFileMethod)) {
                 if (sendFileAttachDirMethod == null || sendFileAttachPathMethod == null) {
@@ -1215,6 +1258,7 @@ public class DexFinder {
     }
 
     public void resolveSendXmlApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isSendXmlAppMsgMethod(sendXmlAppMsgMethod)) {
                 resolveAppMsgParseMethod(sendXmlAppMsgMethod.getParameterTypes()[0]);
@@ -1242,8 +1286,14 @@ public class DexFinder {
     }
 
     public void resolveMsgDescTextApi() {
+        if (ensureSnapshotLoaded() && msgDescLocatorResolved) return;
         try {
-            if (!msgDescTextMethods.isEmpty()) return;
+            if (msgDescLocatorResolved) return;
+            if (!msgDescTextMethods.isEmpty()) {
+                msgDescLocatorResolved = true;
+                saveCache();
+                return;
+            }
             // 跨版本通用：微信消息描述文本方法名稳定为 "l"（各版本 xN0.q/r.l），用 "string" 字符串缩小范围后按签名过滤
             List<MethodData> methods = dexKit.findMethod(mkMethodUsingStringsAndName("l", "string"));
             for (MethodData methodData : methods) {
@@ -1257,6 +1307,8 @@ public class DexFinder {
             if (!msgDescTextMethods.isEmpty()) {
                 logDetail("消息描述文本兜底方法: " + msgDescTextMethods.size() + " 个");
             }
+            msgDescLocatorResolved = true;
+            saveCache();
         } catch (Throwable e) {
             h.Hchat.utils.HLog.e(TAG + " resolveMsgDescTextApi 失败: " + e.getMessage(), e);
         }
@@ -1320,6 +1372,7 @@ public class DexFinder {
     }
 
     public void resolveSendVideoApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (sendVideoMethod != null) return;
 
@@ -1342,6 +1395,7 @@ public class DexFinder {
     }
 
     public void resolveSendVideoTaskApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (sendVideoTaskClass != null) return;
             sendVideoTaskClass = findFirstClassByStrings(
@@ -1355,6 +1409,7 @@ public class DexFinder {
     }
 
     public void resolveVideoPathApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (!isVideoPathMethod(videoPathMethod)) {
                 videoPathMethod = null;
@@ -1429,6 +1484,7 @@ public class DexFinder {
     }
 
     public void resolveVideoInfoApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isVideoInfoByFileNameMethod(videoInfoByFileNameMethod, videoInfoClass)) return;
             videoInfoByFileNameMethod = null;
@@ -1482,6 +1538,7 @@ public class DexFinder {
     }
 
     public void resolveSendVoiceApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (voiceStartRecordMethod == null) {
                 List<MethodData> methods = dexKit.findMethod(
@@ -1695,6 +1752,7 @@ public class DexFinder {
     }
 
     public void resolveSendEmojiApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (emojiSendMethod == null) {
                 List<MethodData> methods = dexKit.findMethod(
@@ -1838,6 +1896,7 @@ public class DexFinder {
     }
 
     public void resolveFavoriteApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             resolveFavoriteItemApi();
             resolveFavoriteListApi();
@@ -2161,6 +2220,7 @@ public class DexFinder {
     }
 
     public void resolveTransferOperationApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isTransferOperationClass(transferOperationClass)) return;
 
@@ -2207,6 +2267,7 @@ public class DexFinder {
     }
 
     public void resolveTransferQueryApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isTransferQueryClass(transferQueryClass)
                     && isTransferQueryResponseMethod(transferQueryResponseMethod, transferQueryClass)) return;
@@ -2233,6 +2294,7 @@ public class DexFinder {
     }
 
     public void resolveVerifyUserApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isVerifyUserClass(verifyUserClass)) return;
 
@@ -2269,6 +2331,7 @@ public class DexFinder {
     }
 
     public void resolveContactCardApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isContactCardXmlMethod(contactCardXmlMethod)) return;
 
@@ -2302,6 +2365,7 @@ public class DexFinder {
     }
 
     public void resolvePatMessageApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (!isPatDisplayTemplateMethod(patDisplayTemplateMethod)) {
                 List<MethodData> methods = dexKit.findMethod(
@@ -2473,6 +2537,9 @@ public class DexFinder {
 
     // ============ 数据库/联系人公共 API ============
     public void resolveDatabaseApi() {
+        boolean snapshotLoaded = ensureSnapshotLoaded();
+        if (snapshotLoaded && coreStorageGetter != null && sqliteDbWrapperClass != null
+                && configStorageClass != null) return;
         try {
             if (coreStorageGetter != null && sqliteDbWrapperClass != null && configStorageClass != null) return;
 
@@ -2508,6 +2575,12 @@ public class DexFinder {
                     "MicroMsg.SqliteDB",
                     "sql is null ");
 
+            h.Hchat.utils.HLog.e("[Hchat:DexFinder]数据库API snapshot=" + snapshotLoaded
+                    + " kernel=" + (mmKernelClass != null ? mmKernelClass.getName() : "null")
+                    + " storageGetter=" + (coreStorageGetter != null ? coreStorageGetter.getName() : "null")
+                    + " coreStorage=" + (coreStorageClass != null ? coreStorageClass.getName() : "null")
+                    + " config=" + (configStorageClass != null ? configStorageClass.getName() : "null")
+                    + " sqlite=" + (sqliteDbWrapperClass != null ? sqliteDbWrapperClass.getName() : "null"));
             logDetail("数据库API: kernel="
                     + (mmKernelClass != null ? mmKernelClass.getName() : "null")
                     + " storageGetter=" + (coreStorageGetter != null ? coreStorageGetter.getName() : "null")
@@ -2520,6 +2593,7 @@ public class DexFinder {
     }
 
     public void resolveConversationDeleteApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isConversationDeleteMethod(conversationDeleteMethod)) return;
             conversationDeleteMethod = null;
@@ -2562,6 +2636,7 @@ public class DexFinder {
     }
 
     public void resolveMessageClearApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (isMessageClearByTalkerMethod(messageClearByTalkerMethod, messageClearBatchMethod)) {
                 return;
@@ -2638,6 +2713,7 @@ public class DexFinder {
     }
 
     public void resolveConversationMuteApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (!isServiceGetterMethod(serviceGetterMethod)) {
                 resolveServiceManagerApi();
@@ -2872,6 +2948,7 @@ public class DexFinder {
     }
 
     public void resolveLocalMessageApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (hasLocalMessageApi() && localMessageCreateTimeMethod != null) return;
             int candidateCount = resolveLocalMessageApiBySignature();
@@ -2961,6 +3038,7 @@ public class DexFinder {
     }
 
     public void resolveGroupMemberDisplayName() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (groupMemberDisplayNameMethod != null) return;
             List<MethodData> methods = dexKit.findMethod(
@@ -2989,6 +3067,7 @@ public class DexFinder {
     }
 
     public void resolveInviteChatroomMemberApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (inviteChatroomMemberCtor == null) {
                 inviteChatroomMemberCtor = findInviteChatroomMemberCtor(inviteChatroomMemberClass);
@@ -3021,6 +3100,7 @@ public class DexFinder {
     }
 
     public void resolveAddChatroomMemberApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (addChatroomMemberCtor == null) {
                 addChatroomMemberCtor = findAddChatroomMemberCtor(addChatroomMemberClass);
@@ -3053,6 +3133,7 @@ public class DexFinder {
     }
 
     public void resolveDelChatroomMemberApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (delChatroomMemberCtor == null) {
                 delChatroomMemberCtor = findDelChatroomMemberCtor(delChatroomMemberClass);
@@ -3083,6 +3164,7 @@ public class DexFinder {
     }
 
     public void resolveRevokeMsgApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (revokeMsgCtor == null) {
                 revokeMsgCtor = findRevokeMsgCtor(revokeMsgClass);
@@ -3114,6 +3196,7 @@ public class DexFinder {
     }
 
     public void resolveUploadDeviceStepApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (uploadDeviceStepCtor == null) {
                 uploadDeviceStepCtor = findUploadDeviceStepCtor(uploadDeviceStepClass);
@@ -3145,6 +3228,7 @@ public class DexFinder {
     }
 
     public void resolveContactLabelNetworkApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (addContactLabelCtorString == null) {
                 addContactLabelCtorString = findCtorByExactTypes(addContactLabelClass, String.class);
@@ -3209,6 +3293,7 @@ public class DexFinder {
     }
 
     public void resolveSnsUploadApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (hasSnsUploadApi() && snsAddVideoMethod != null && snsShareAppMsgMethod != null) {
                 return;
@@ -3309,6 +3394,7 @@ public class DexFinder {
     }
 
     public void resolveChatPageApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (chatPageStartMethod != null
                     && chatPageFragmentEnterMethod != null
@@ -3368,6 +3454,7 @@ public class DexFinder {
     }
 
     public void resolveScriptSendHookApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (chatFooterSendClickMethod != null) return;
             List<MethodData> methods = dexKit.findMethod(
@@ -3404,23 +3491,45 @@ public class DexFinder {
     }
 
     // ============ DexKit 结果缓存 ============
+    private boolean ensureSnapshotLoaded() {
+        if (resolvedAll) return true;
+        if (cacheLoadAttempted) return false;
+        return loadCache();
+    }
+
     private boolean loadCache() {
+        cacheLoadAttempted = true;
         if (cachePrefs == null || runtimeCacheKey.length() == 0) return false;
         try {
-            if (!cachePrefs.getBoolean(CACHE_COMPLETE, false)) return false;
             String savedKey = cachePrefs.getString(CACHE_KEY, "");
-            if (!runtimeCacheKey.equals(savedKey)) {
+            if (!runtimeCacheKey.equals(savedKey)
+                    && !DexCacheIdentity.sameRuntime(runtimeCacheKey, savedKey)) {
                 resetCacheForRuntimeKey();
                 return false;
             }
+            if (!CACHE_SNAPSHOT_VERSION.equals(
+                    cachePrefs.getString(CACHE_SNAPSHOT_VERSION_KEY, ""))) return false;
 
             addMsgClasses = loadClassList("addMsgClasses");
             receiveLuckyMoneyClass = loadClass("receiveLuckyMoneyClass");
             receiveLuckyMoneyUnionClass = loadClass("receiveLuckyMoneyUnionClass");
             openLuckyMoneyClass = loadClass("openLuckyMoneyClass");
             openLuckyMoneyUnionClass = loadClass("openLuckyMoneyUnionClass");
+            String savedUnionLocatorVersion = cachePrefs.getString(
+                    RED_PACKET_UNION_LOCATOR_VERSION_KEY, "");
+            unionReceiveCtor = findCtorByArgCount(receiveLuckyMoneyUnionClass, 6);
+            unionOpenCtor10 = findCtorByArgCount(openLuckyMoneyUnionClass, 10);
+            unionOpenCtor9 = findCtorByArgCount(openLuckyMoneyUnionClass, 9);
+            receiveUnionLocatorResolved = RED_PACKET_UNION_LOCATOR_VERSION.equals(savedUnionLocatorVersion)
+                    && receiveLuckyMoneyUnionClass != null && unionReceiveCtor != null;
+            openUnionLocatorResolved = RED_PACKET_UNION_LOCATOR_VERSION.equals(savedUnionLocatorVersion)
+                    && openLuckyMoneyUnionClass != null
+                    && (unionOpenCtor10 != null || unionOpenCtor9 != null);
             netQueueClass = loadClass("netQueueClass");
             netQueueCandidateClasses = loadClassList("netQueueCandidateClasses");
+            networkQueueLocatorResolved = NETWORK_QUEUE_LOCATOR_VERSION.equals(
+                    cachePrefs.getString(NETWORK_QUEUE_LOCATOR_VERSION_KEY, ""))
+                    && netQueueClass != null;
             packetBaseClasses = loadClassList("packetBaseClasses");
             packetQueueClasses = loadClassList("packetQueueClasses");
             fakePacketClasses = loadClassList("fakePacketClasses");
@@ -3437,6 +3546,15 @@ public class DexFinder {
             protobufStaticDispatchMethod = loadMethod("protobufStaticDispatchMethod");
             protobufSceneEndMethods = loadMethodList("protobufSceneEndMethods");
             wishWxHbClass = loadClass("wishWxHbClass");
+            ecsGiftTaskClass = loadClass("ecsGiftTaskClass");
+            ecsGiftServiceClass = loadClass("ecsGiftServiceClass");
+            ecsGiftMsgClass = loadClass("ecsGiftMsgClass");
+            msgDescTextMethods = loadMethodList("msgDescTextMethods");
+            wishLocatorResolved = cachePrefs.getBoolean(LOCATOR_WISH_COMPLETE, false);
+            packetCompatLocatorResolved = cachePrefs.getBoolean(LOCATOR_PACKET_COMPLETE, false);
+            ecsGiftLocatorResolved = cachePrefs.getBoolean(LOCATOR_ECS_COMPLETE, false);
+            msgDescLocatorResolved = cachePrefs.getBoolean(LOCATOR_MSG_DESC_COMPLETE, false);
+            protobufLocatorResolved = cachePrefs.getBoolean(LOCATOR_PROTOBUF_COMPLETE, false);
             sendTextMsgClass = loadClass("sendTextMsgClass");
             serviceGetterMethod = loadMethod("serviceGetterMethod");
             getContactAddMethods = loadMethodList("getContactAddMethods");
@@ -3556,9 +3674,6 @@ public class DexFinder {
             if (localMessageCreateTimeMethod == null && localMessageInsertMethod != null) {
                 localMessageCreateTimeMethod = findLocalMessageCreateTimeMethod(localMessageInsertMethod.getDeclaringClass());
             }
-            if (localSystemMessageMethod == null) {
-                resolveLocalSystemMessageMethod();
-            }
             voiceUploadCtor = findCtorByExactTypes(voiceUploadClass, String.class, int.class);
             voiceUploadCdnCtor = findCtorByExactTypes(voiceUploadClass, String.class, boolean.class);
             sendPatSceneCtor = findSendPatSceneCtor(sendPatSceneClass);
@@ -3594,22 +3709,11 @@ public class DexFinder {
             chatPageFragmentEnterMethod = loadMethod("chatPageFragmentEnterMethod");
             chatPageFragmentExitMethod = loadMethod("chatPageFragmentExitMethod");
             chatFooterSendClickMethod = loadMethod("chatFooterSendClickMethod");
-            return isCacheUsable();
+            return !cacheDescriptorInvalid;
         } catch (Throwable e) {
             logDetail("读取缓存失败，重新解析: " + e.getMessage());
             return false;
         }
-    }
-
-    private boolean isCacheUsable() {
-        return addMsgClasses != null && !addMsgClasses.isEmpty()
-                && receiveLuckyMoneyClass != null
-                && openLuckyMoneyClass != null
-                && netQueueClass != null
-                && sendTextMsgClass != null
-                && sqliteDbWrapperClass != null
-                && chatPageStartMethod != null
-                && chatPageFragmentEnterMethod != null;
     }
 
     private void resetCacheForRuntimeKey() {
@@ -4651,6 +4755,14 @@ public class DexFinder {
         try {
             SharedPreferences.Editor editor = cachePrefs.edit().clear();
             editor.putString(CACHE_KEY, runtimeCacheKey);
+            if (receiveUnionLocatorResolved && openUnionLocatorResolved) {
+                editor.putString(RED_PACKET_UNION_LOCATOR_VERSION_KEY,
+                        RED_PACKET_UNION_LOCATOR_VERSION);
+            }
+            if (networkQueueLocatorResolved) {
+                editor.putString(NETWORK_QUEUE_LOCATOR_VERSION_KEY,
+                        NETWORK_QUEUE_LOCATOR_VERSION);
+            }
             editor.putString("addMsgClasses", joinClassNames(addMsgClasses));
             putClass(editor, "receiveLuckyMoneyClass", receiveLuckyMoneyClass);
             putClass(editor, "receiveLuckyMoneyUnionClass", receiveLuckyMoneyUnionClass);
@@ -4674,6 +4786,10 @@ public class DexFinder {
             putMethod(editor, "protobufStaticDispatchMethod", protobufStaticDispatchMethod);
             putMethodList(editor, "protobufSceneEndMethods", protobufSceneEndMethods);
             putClass(editor, "wishWxHbClass", wishWxHbClass);
+            putClass(editor, "ecsGiftTaskClass", ecsGiftTaskClass);
+            putClass(editor, "ecsGiftServiceClass", ecsGiftServiceClass);
+            putClass(editor, "ecsGiftMsgClass", ecsGiftMsgClass);
+            putMethodList(editor, "msgDescTextMethods", msgDescTextMethods);
             putClass(editor, "sendTextMsgClass", sendTextMsgClass);
             putMethod(editor, "serviceGetterMethod", serviceGetterMethod);
             putMethodList(editor, "getContactAddMethods", getContactAddMethods);
@@ -4791,7 +4907,15 @@ public class DexFinder {
             putMethod(editor, "chatPageFragmentEnterMethod", chatPageFragmentEnterMethod);
             putMethod(editor, "chatPageFragmentExitMethod", chatPageFragmentExitMethod);
             putMethod(editor, "chatFooterSendClickMethod", chatFooterSendClickMethod);
-            editor.putBoolean(CACHE_COMPLETE, true);
+            editor.putBoolean(LOCATOR_WISH_COMPLETE, wishLocatorResolved);
+            editor.putBoolean(LOCATOR_PACKET_COMPLETE, packetCompatLocatorResolved);
+            editor.putBoolean(LOCATOR_ECS_COMPLETE, ecsGiftLocatorResolved);
+            editor.putBoolean(LOCATOR_MSG_DESC_COMPLETE, msgDescLocatorResolved);
+            editor.putBoolean(LOCATOR_PROTOBUF_COMPLETE, protobufLocatorResolved);
+            boolean snapshotReady = !cacheDescriptorInvalid;
+            editor.putString(CACHE_SNAPSHOT_VERSION_KEY,
+                    snapshotReady ? CACHE_SNAPSHOT_VERSION : "");
+            editor.putBoolean(CACHE_COMPLETE, snapshotReady);
             editor.apply();
         } catch (Throwable e) {
             h.Hchat.utils.HLog.e(TAG + " 保存缓存失败: " + e.getMessage(), e);
@@ -4802,8 +4926,11 @@ public class DexFinder {
         try {
             String name = cachePrefs.getString(key, "");
             if (name == null || name.length() == 0) return null;
-            return KavaReflector.loadClass(name, classLoader);
+            Class<?> value = KavaReflector.loadClass(name, classLoader);
+            if (value == null) cacheDescriptorInvalid = true;
+            return value;
         } catch (Throwable ignored) {
+            cacheDescriptorInvalid = true;
             return null;
         }
     }
@@ -4819,10 +4946,11 @@ public class DexFinder {
                 if (name.length() == 0) continue;
                 try {
                     Class<?> clazz = KavaReflector.loadClass(name, classLoader);
+                    if (clazz == null) cacheDescriptorInvalid = true;
                     if (!result.contains(clazz)) result.add(clazz);
-                } catch (Throwable ignored) {}
+                } catch (Throwable ignored) { cacheDescriptorInvalid = true; }
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) { cacheDescriptorInvalid = true; }
         return result;
     }
 
@@ -4833,13 +4961,19 @@ public class DexFinder {
             int hash = spec.indexOf('#');
             int left = spec.indexOf('(', hash + 1);
             int right = spec.indexOf(')', left + 1);
-            if (hash <= 0 || left <= hash || right < left) return null;
+            if (hash <= 0 || left <= hash || right < left) {
+                cacheDescriptorInvalid = true;
+                return null;
+            }
             Class<?> owner = KavaReflector.loadClass(spec.substring(0, hash), classLoader);
             String name = spec.substring(hash + 1, left);
             String paramsText = spec.substring(left + 1, right);
             Class<?>[] params = parseParamTypes(paramsText);
-            return KavaReflector.findDeclaredMethod(owner, name, params);
+            Method value = KavaReflector.findDeclaredMethod(owner, name, params);
+            if (value == null) cacheDescriptorInvalid = true;
+            return value;
         } catch (Throwable ignored) {
+            cacheDescriptorInvalid = true;
             return null;
         }
     }
@@ -4864,7 +4998,10 @@ public class DexFinder {
             int hash = spec.indexOf('#');
             int left = spec.indexOf('(', hash + 1);
             int right = spec.indexOf(')', left + 1);
-            if (hash <= 0 || left <= hash || right < left) return null;
+            if (hash <= 0 || left <= hash || right < left) {
+                cacheDescriptorInvalid = true;
+                return null;
+            }
             Class<?> owner = KavaReflector.loadClass(spec.substring(0, hash), classLoader);
             String name = spec.substring(hash + 1, left);
             String paramsText = spec.substring(left + 1, right);
@@ -4954,6 +5091,7 @@ public class DexFinder {
 
     // ============ 伪造/分裂红包与网络包兼容 ============
     private void resolvePacketCompatClasses() {
+        if (packetCompatLocatorResolved) return;
         try {
             packetBaseClasses.clear();
             packetQueueClasses.clear();
@@ -4973,6 +5111,7 @@ public class DexFinder {
             logDetail("包兼容类: base=" + packetBaseClasses.size()
                     + " queue=" + packetQueueClasses.size()
                     + " fake=" + fakePacketClasses.size());
+            packetCompatLocatorResolved = true;
         } catch (Throwable e) {
             h.Hchat.utils.HLog.e(TAG + " resolvePacketCompat 失败: " + e.getMessage(), e);
         }
@@ -5072,6 +5211,7 @@ public class DexFinder {
     }
 
     public void resolveGroupSolitaireApi() {
+        if (ensureSnapshotLoaded()) return;
         try {
             if (groupSolitaireSendMethod != null && groupSolitairePluginClass != null) return;
             List<Class<?>> candidates = new ArrayList<>();
@@ -5220,7 +5360,7 @@ public class DexFinder {
 
     private Class<?> findFirstLikelyQueueClass() {
         for (Class<?> cl : netQueueCandidateClasses) {
-            if (hasLikelyQueueSendMethod(cl)) return cl;
+            if (hasQueueSendMethodForRequests(cl)) return cl;
         }
         return null;
     }
@@ -5250,6 +5390,35 @@ public class DexFinder {
                         || rt == void.class) {
                     return true;
                 }
+            }
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
+    private boolean hasQueueSendMethodForRequests(Class<?> cl) {
+        return hasQueueSendMethodForRequest(cl, receiveLuckyMoneyClass)
+                || hasQueueSendMethodForRequest(cl, receiveLuckyMoneyUnionClass)
+                || hasQueueSendMethodForRequest(cl, openLuckyMoneyClass)
+                || hasQueueSendMethodForRequest(cl, openLuckyMoneyUnionClass);
+    }
+
+    private boolean hasQueueSendMethodForRequest(Class<?> cl, Class<?> requestClass) {
+        if (cl == null || requestClass == null) return false;
+        try {
+            for (Method method : KavaReflector.declaredMethods(cl)) {
+                String name = method.getName();
+                if ("equals".equals(name) || "hashCode".equals(name) || "toString".equals(name)
+                        || "wait".equals(name) || "notify".equals(name) || "notifyAll".equals(name)
+                        || "cancel".equals(name)) continue;
+                Class<?>[] params = method.getParameterTypes();
+                if (params == null || (params.length != 1 && params.length != 2)) continue;
+                if (params.length == 2 && params[1] != int.class && params[1] != Integer.class) continue;
+                Class<?> first = params[0];
+                if (first == null || first.isPrimitive() || first == String.class || first == Object.class) continue;
+                if (!first.isAssignableFrom(requestClass) && !requestClass.isAssignableFrom(first)) continue;
+                Class<?> rt = method.getReturnType();
+                if (rt == boolean.class || rt == Boolean.class || rt == int.class
+                        || rt == Integer.class || rt == void.class) return true;
             }
         } catch (Throwable ignored) {}
         return false;
@@ -5285,11 +5454,50 @@ public class DexFinder {
     }
 
     // ============ Protobuf 通用抓包/发包 ============
+    // ============ ECS 礼物静默处理 ============
+    private void resolveEcsGiftApi() {
+        if (ecsGiftLocatorResolved) return;
+        if (ecsGiftTaskClass != null && ecsGiftServiceClass != null && ecsGiftMsgClass != null) {
+            ecsGiftLocatorResolved = true;
+            return;
+        }
+        try {
+            for (MethodData md : dexKit.findMethod(mkMethodUsingStrings("updateGiftMsgByCgi"))) {
+                Class<?> task = KavaReflector.loadClass(md.getClassName(), classLoader);
+                if (task == null) continue;
+                for (Constructor<?> ctor : KavaReflector.declaredConstructors(task)) {
+                    Class<?>[] ps = ctor.getParameterTypes();
+                    if (ps == null || ps.length != 2) continue;
+                    Class<?> msg = null;
+                    Class<?> svc = null;
+                    for (Class<?> pt : ps) {
+                        if (pt.getName() != null && pt.getName().startsWith("com.tencent.mm.storage.")) msg = pt;
+                        else svc = pt;
+                    }
+                    if (msg == null || svc == null) continue;
+                    ecsGiftTaskClass = task;
+                    ecsGiftServiceClass = svc;
+                    ecsGiftMsgClass = msg;
+                    logDetail("ECS礼物静默类: task=" + task.getName() + " svc=" + svc.getName() + " msg=" + msg.getName());
+                    return;
+                }
+            }
+            logDetail("ECS礼物静默类未定位到");
+            ecsGiftLocatorResolved = true;
+        } catch (Throwable e) {
+            h.Hchat.utils.HLog.e(TAG + " resolveEcsGiftApi 失败: " + e.getMessage(), e);
+        }
+    }
+
     private void resolveProtobufPacketApi() {
+        if (protobufLocatorResolved) return;
         try {
             if (protobufBaseClass == null) protobufBaseClass = findProtobufBaseClass();
             Class<?> protoBase = protobufBaseClass;
-            if (protoBase == null) return;
+            if (protoBase == null) {
+                protobufLocatorResolved = true;
+                return;
+            }
             if (protobufRawReqClass == null) protobufRawReqClass = findRawReqClass();
             if (protobufNewSendMsgReqClass == null) protobufNewSendMsgReqClass = findNewSendMsgReqClass(protoBase);
             if (protobufOplogReqClass == null) protobufOplogReqClass = findOplogReqClass(protoBase);
@@ -5318,6 +5526,7 @@ public class DexFinder {
                     + " scene=" + className(protobufNetSceneBaseClass)
                     + " dispatch=" + methodName(protobufStaticDispatchMethod)
                     + " sceneEnd=" + (protobufSceneEndMethods == null ? 0 : protobufSceneEndMethods.size()));
+            protobufLocatorResolved = true;
         } catch (Throwable e) {
             h.Hchat.utils.HLog.e(TAG + " resolveProtobufPacketApi 失败: " + e.getMessage(), e);
         }
@@ -5880,6 +6089,8 @@ public class DexFinder {
     private void collectKnownNetworkQueueClasses() {
         String[] names = {
                 "tk0.j1",
+                "gp0.j1",
+                "com.tencent.mm.modelbase.r1",
                 "com.tencent.mm.kernel.h",
                 "com.tencent.mm.kernel.g",
                 "com.tencent.mm.model.bh",

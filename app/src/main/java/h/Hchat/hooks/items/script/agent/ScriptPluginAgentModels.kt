@@ -200,7 +200,9 @@ data class ScriptPluginAgentRequest(
     /** False for a new user turn, true after a tool was called inside the current turn. */
     val nativeToolHistoryAfterCurrentUser: Boolean = false,
     val sessionId: String = "",
-    val turnId: String = ""
+    val turnId: String = "",
+    /** Enabled Skill metadata only. Instructions are loaded through the Skill tools on demand. */
+    val skillsContext: String = ""
 )
 
 data class ScriptPluginAgentTurn(

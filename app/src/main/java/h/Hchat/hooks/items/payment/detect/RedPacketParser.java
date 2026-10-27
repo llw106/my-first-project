@@ -2,7 +2,7 @@ package h.Hchat.hooks.items.payment.detect;
 
 import android.text.TextUtils;
 
-import java.util.regex.Matcher;
+import h.Hchat.utils.XmlValueReader;
 import java.util.regex.Pattern;
 
 /**
@@ -26,16 +26,7 @@ public final class RedPacketParser {
     };
 
     public static String getXmlParamByTag(String xml, String tag) {
-        if (TextUtils.isEmpty(xml) || TextUtils.isEmpty(tag)) return "";
-        try {
-            Matcher cdata = Pattern.compile("<" + tag + "><!\\[CDATA\\[(.*?)\\]></" + tag + ">")
-                    .matcher(xml);
-            if (cdata.find()) return cdata.group(1);
-
-            Matcher plain = Pattern.compile("<" + tag + ">(.*?)</" + tag + ">").matcher(xml);
-            if (plain.find()) return plain.group(1);
-        } catch (Throwable ignored) {}
-        return "";
+        return XmlValueReader.getTagValue(xml, tag);
     }
 
     public static String getNativeUrlParam(String url, String key) {
@@ -60,6 +51,7 @@ public final class RedPacketParser {
         return !TextUtils.isEmpty(text)
                 && (text.contains("receivehongbao")
                 || text.contains("wxhb_personalreceive")
+                || text.contains("weixin://weixinunionhongbao/")
                 || text.contains("<nativeurl>"));
     }
 
@@ -147,6 +139,7 @@ public final class RedPacketParser {
     }
 
     public static int getLuckyMoneySceneId(String xmlContent, String talker, String nativeUrl) {
+        if (isUnionLuckyMoney(xmlContent, talker, nativeUrl)) return 1005;
         try {
             String scene = null;
             if (!TextUtils.isEmpty(nativeUrl)) {
@@ -158,25 +151,25 @@ public final class RedPacketParser {
             if (TextUtils.isEmpty(scene)) scene = getXmlParamByTag(xmlContent, "scene_id");
             if (!TextUtils.isEmpty(scene)) return safeParseInt(scene, 1002);
         } catch (Throwable ignored) {}
-        return isUnionLuckyMoney(xmlContent, talker, nativeUrl) ? 1005 : 1002;
+        return 1002;
     }
 
     public static boolean isUnionLuckyMoney(String xmlContent, String talker, String nativeUrl) {
         try {
-            String text = (String.valueOf(talker) + " "
-                    + String.valueOf(nativeUrl) + " "
-                    + String.valueOf(xmlContent)).toLowerCase();
-            return text.contains("sceneid=1005")
-                    || text.contains("scene_id=1005")
-                    || text.contains("@openim")
-                    || text.contains("openim")
-                    || text.contains("@im.chatroom")
-                    || text.contains("im.chatroom")
-                    || text.contains("imchatroom")
-                    || text.contains("wework")
-                    || text.contains("wxwork")
-                    || text.contains("union_source")
-                    || text.contains("企业微信");
+            String normalizedTalker = String.valueOf(talker).trim().toLowerCase();
+            if (normalizedTalker.endsWith("@openim")
+                    || normalizedTalker.endsWith("@im.chatroom")) {
+                return true;
+            }
+
+            String url = nativeUrl == null ? "" : nativeUrl.trim();
+            if (url.startsWith("weixin://weixinunionhongbao/")) return true;
+            for (String key : new String[]{"sceneid", "scene_id", "scene"}) {
+                if ("1005".equals(getNativeUrlParam(url, key))
+                        || "1005".equals(getXmlParamByTag(xmlContent, key).trim())) return true;
+            }
+            return !TextUtils.isEmpty(getNativeUrlParam(url, "union_source"))
+                    || !TextUtils.isEmpty(getXmlParamByTag(xmlContent, "union_source").trim());
         } catch (Throwable ignored) {
             return false;
         }

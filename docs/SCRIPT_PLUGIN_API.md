@@ -1,5 +1,7 @@
 # Hchat 脚本插件接口
 
+插件 Agent 的配置页及聊天快捷设置提供 `Skill 管理`：可新建、编辑、启停、删除，或从系统文件选择器导入带 `SKILL.md` 的技能 ZIP / 单 Markdown。技能位于脚本根目录同级 `Agent/skills`，所有模型配置共用；聊天输入 `$技能名` 指定使用，或由 Agent 按描述选用。`hchat.skills.list` 和 `hchat.skills.read` 是 Agent 专用只读工具，不是 BeanShell 全局 API；按需读取指南及附属文本，不自动执行技能脚本。格式、大小限制和 MCP 支持范围见 `docs/FEATURE_FRAMEWORK.md` 的 Agent 交互架构。
+
 本文档给插件作者使用。Hchat 脚本插件采用 WA 风格，脚本文件是 BeanShell 写法，文件名固定为 `main.java`。少量接口会比 WA 多返回 `boolean`；脚本不接收返回值时仍可直接调用。
 
 插件 Agent 只能把本文档、内置开发指南及当前运行时/工具结果明确确认的内容当作事实。能力、可用性或限制没有明确依据时，必须说明未知或需要运行时验证，不得猜测。
@@ -9,6 +11,10 @@
 模型选择页可直接手动填写模型 ID 并应用，无需先获取列表；列表获取失败或缺少目标模型时仍可手动使用。聊天页快捷选项、模型选择页与 Agent 配置页均提供“推理强度”，聊天页选择后立即保存并用于下一次请求，可选择默认或当前接口与模型对应的档位，设置按配置档案保存。默认不额外指定推理参数；非默认档位需模型和服务端支持，不支持时会显示接口错误。运行中切换只影响后续请求。
 
 Agent 的联网函数工具分为 `hchat_web_search` 和 `hchat_web_fetch`：前者搜索关键词或 GitHub `owner/repo`，后者读取已经给出的完整 HTTP(S) 网页或 GitHub 文件地址。已知网址时应直接读取正文，不再把网址当作关键词搜索。
+
+Agent 的 `workspace_status` 会对根 `main.java` 及附属 `.java/.bsh` 做真实 BeanShell 语法解析，复用运行时的注解、默认参数、字符串模板和隐式构造预处理，不执行顶层语句、初始化器或回调。语法错误会反馈给模型修复，并阻止提交；语法通过不等于业务行为已验证。排查已安装插件时可调用 `hchat.workspace.runtime_diagnostics`，只读当前进程加载状态与该插件 `log.txt`，支持按行数和字节边界向前分页，不启用插件也不新建工作区。日志包含插件主动输出与加载失败，普通回调异常若只记录在模块 HLog 则不在此工具范围内；旧日志不能作为本轮新代码已运行的证明。
+
+自动压缩在每次模型请求之前检查，包括同一任务的完整工具批次之间以及断线续接。摘要按顺序分段生成，先前记录不会因为总长度超过 120000 字符就被直接丢掉；只有全部片段成功且上下文确实缩短时才切换新缓存周期。压缩保留正在修改的工作区、revision 与已完成工具，不重新执行写入。失败保留原摘要、原协议和暂存修改，同一未增长的上下文不会反复触发压缩。Token 为估算值，中文和图片分别估算，不将图片 base64 长度直接当作模型 Token 数。
 
 Agent 内置逆向工具还支持资源 ID 使用方法定位，以及目标类/方法的 Java 语义导出和 Smali 原始导出；大文本通过 `offset` / `nextOffset` 分页。Java 导出只加载目标类所在的单个 Dex，完成后立即释放。
 
@@ -813,7 +819,7 @@ void onNewFriend(String wxid, String ticket, int scene) {
 
 微信主进程冷启动自动加载已启用插件时，模块会先初始化脚本 Bridge、目录和文件监听，等公共 Dex 定位完成并确认联系人数据库包含 `rcontact`、`chatroom` 表后，再在独立线程执行插件源码与 `onLoad()`。该等待不阻塞微信主线程或 DexKit 调度队列，某个主进程插件加载失败也不会阻断后续插件；手动启用或重载仍同步返回真实结果，数据库尚未就绪时会直接返回可重试错误。
 
-`process=appbrand` / `all` 的插件会在每个小程序进程 `Application` 就绪后，由独立轻量运行时加载。小程序进程不初始化完整 `FeatureManager`、联系人/消息数据库、主进程消息回调、插件文件监听或 DexKit；`dexKit`、`dexKitBridge`、`dexFinder`、`dexBridgeHolder` 均为 `null`，联系人、数据库、发送消息等依赖主进程公共 API 的函数也不保证可用。小程序插件应通过稳定完整类名、反射及 `hookBefore` / `hookAfter` / `hookReplace` 操作当前 `classLoader`；不要在子进程创建新的 DexKit。各小程序进程使用隔离的 Dex/SO 代码缓存，`config.prop` 写入使用跨进程文件锁；配置值仍由同一插件的各进程共享。小程序进程加载失败只写错误日志，不会自动关闭该插件的共享开关，以免一个小程序进程影响其它进程。
+`process=appbrand` / `all` 的插件会在每个小程序进程 `Application` 就绪后，由独立轻量运行时加载。模块先按插件清单与启用状态判断该进程是否存在需要运行的小程序插件：没有已启用的小程序插件时，小程序进程不创建脚本 Bridge、不启动加载线程，也不初始化脚本运行时对象；只有确实需要时才创建一次运行时并按清单加载。小程序进程不初始化完整 `FeatureManager`、联系人/消息数据库、主进程消息回调、插件文件监听或 DexKit；`dexKit`、`dexKitBridge`、`dexFinder`、`dexBridgeHolder` 均为 `null`，联系人、数据库、发送消息等依赖主进程公共 API 的函数也不保证可用。小程序插件应通过稳定完整类名、反射及 `hookBefore` / `hookAfter` / `hookReplace` 操作当前 `classLoader`；不要在子进程创建新的 DexKit。各小程序进程使用隔离的 Dex/SO 代码缓存，`config.prop` 写入使用跨进程文件锁；配置值仍由同一插件的各进程共享。小程序进程加载失败只写错误日志，不会自动关闭该插件的共享开关，以免一个小程序进程影响其它进程。
 
 最小小程序进程 Hook 结构：
 
@@ -1474,6 +1480,7 @@ int deleted = database.delete(
 说明：
 
 - HTTP 是异步回调，不会直接返回响应内容。
+- 插件卸载时会关闭该插件独立的异步作用域，取消尚未开始的脚本任务并关闭其 HTTP 连接池；已经返回的网络或媒体结果不会再调用已卸载脚本的回调。卸载后的新异步请求会被拒绝。
 - `timeout` 单位是秒。
 - `get/post` 回调参数是响应文本，失败时可能是 `null`。
 - `download` 回调参数是下载后的 `File`，失败时可能是 `null`。
@@ -2120,3 +2127,8 @@ void onMemberChange(String type, String groupWxid, String userWxid, String userN
 - 模块会分别记录超过 `50ms` 的单击/长按发送按钮回调和因解释器忙碌而跳过的插件名；同类日志会限频。
 - 网络请求请使用 `get/post/download` 的回调处理结果。
 - 文件路径建议使用 `pluginDir` 或 `cacheDir`。
+
+
+## 共享 DexKit 的空闲内存行为
+
+模块注入的 `dexKitBridge` 保持原始 `org.luckypray.dexkit.DexKitBridge` 类型及查询接口。共享对象空闲后会释放底层分析资源，后续查询及既有结果的懒加载会按需恢复；`isValid` 对尚未永久关闭的托管入口保持 true，`isNativeLoaded` 仅表示当前 native 资源是否驻留。插件不要关闭模块共享 bridge；显式 `close()` 仍是永久关闭。脚本自行调用旧 `DexKitBridge.create(...)` 时仍须自行释放，不享受共享入口的托管回收。
