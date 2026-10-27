@@ -237,7 +237,6 @@ import h.Hchat.hooks.items.automessageforward.AutoMessageForwardRule
 import h.Hchat.hooks.items.automessageforward.AutoMessageForwardSettings
 import h.Hchat.hooks.items.callmedialimit.CallMediaLimitFeature
 import h.Hchat.hooks.items.callmedialimit.CallMediaLimitSettings
-import h.Hchat.hooks.items.callmedialimit.CallRingtoneBlockFeature
 import h.Hchat.hooks.items.chattime.ChatTimeStyleFeature
 import h.Hchat.hooks.items.chattime.ChatTimeStyleSettings
 import h.Hchat.hooks.items.conversationgroup.ConversationGroup
@@ -292,8 +291,6 @@ import h.Hchat.hooks.items.hidemenu.HideChatMenuFeature
 import h.Hchat.hooks.items.hidemenu.HideChatMenuSettings
 import h.Hchat.hooks.items.hotupdate.DisableHotUpdateFeature
 import h.Hchat.hooks.items.hotupdate.DisableHotUpdateSettings
-import h.Hchat.hooks.items.hometextcolor.HomeTextColorFeature
-import h.Hchat.hooks.items.hometextcolor.HomeTextColorSettings
 import h.Hchat.hooks.items.inputhint.InputHintFeature
 import h.Hchat.hooks.items.inputhint.InputHintSettings
 import h.Hchat.hooks.items.inputhint.InputHintStats
@@ -381,8 +378,6 @@ import h.Hchat.hooks.items.payment.core.RedPacketRuleTemplate
 import h.Hchat.hooks.items.payment.core.RedPacketSettings
 import h.Hchat.hooks.items.payment.fakebalance.FakeWalletBalanceFeature
 import h.Hchat.hooks.items.payment.fakebalance.FakeWalletBalanceSettings
-import h.Hchat.hooks.items.payment.gift.AutoGiftFeature
-import h.Hchat.hooks.items.payment.gift.GiftSettings
 import h.Hchat.hooks.items.payment.transfer.AutoTransferFeature
 import h.Hchat.hooks.items.payment.transfer.AutoTransferSettings
 import h.Hchat.hooks.items.payment.transfer.TransferReceiveAccountStore
@@ -3116,7 +3111,6 @@ private fun practicalFeatureGroups(
                 SwipeQuoteFeature.ID,
                 EmojiSaveFeature.ID,
                 CallMediaLimitFeature.ID,
-                CallRingtoneBlockFeature.ID
             )
         ),
         FeatureGroupEntry(
@@ -3133,7 +3127,6 @@ private fun practicalFeatureGroups(
             title = "红包转账",
             providers = practicalProviders.filterByIds(
                 AutoRedPacketFeature.ID,
-                AutoGiftFeature.ID,
                 AutoTransferFeature.ID,
                 FakeWalletBalanceFeature.ID,
                 RedPacketDetailsSettingsProvider.FEATURE_ID
@@ -3174,7 +3167,6 @@ private fun practicalFeatureGroups(
             providers = practicalProviders.filterByIds(
                 MessageBubbleFeature.ID,
                 MessageTextColorFeature.ID,
-                HomeTextColorFeature.ID,
                 ChatTimeStyleFeature.ID,
                 InputHintFeature.ID,
                 HideChatAvatarFeature.ID,
@@ -3849,7 +3841,6 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         EmojiSaveFeature.ID -> listOf("保存表情", "表情保存", "动画表情", "长按菜单", "本地文件")
         SwipeQuoteFeature.ID -> listOf("滑动手势", "左滑引用", "右滑复读", "长按复读", "菜单复读", "+1", "复读语音", "语音时长", "滑动距离")
         CallMediaLimitFeature.ID -> listOf("通话媒体限制", "语音通话", "视频通话", "播放语音", "查看视频", "打开拍摄")
-        CallRingtoneBlockFeature.ID -> listOf("屏蔽通话铃声", "呼入铃声", "呼出铃声", "来电铃声", "等待铃声", "语音通话", "视频通话")
         AudioTransformFeature.ID -> listOf(
             "音频转换",
             "音频转码",
@@ -3920,7 +3911,6 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         RemoveMomentsAdsFeature.ID -> listOf("去除朋友圈广告", "朋友圈广告", "广告屏蔽")
         MessageBubbleFeature.ID -> listOf("消息气泡", "聊天气泡", "自定义气泡", "左侧气泡", "右侧气泡", "红包气泡", "转账气泡", "系统消息气泡", "浅色模式", "深色模式", "NinePatch", "九宫格")
         MessageTextColorFeature.ID -> listOf("消息文本颜色", "文字颜色", "聊天气泡文字", "取色器", "浅色模式", "深色模式")
-        HomeTextColorFeature.ID -> listOf("首页文字颜色", "标题颜色", "副标题颜色", "渐变文字", "微信首页", "通讯录", "发现", "我")
         ChatTimeStyleFeature.ID -> listOf("会话时间样式", "聊天时间", "微信时间", "自定义时间", "隐藏时间", "时间格式")
         HideChatAvatarFeature.ID -> listOf("隐藏头像", "隐藏自己头像", "隐藏对方头像", "聊天头像", "群聊头像", "私聊头像")
         CustomBottomBarFeature.ID -> listOf(
@@ -4506,91 +4496,6 @@ private fun MainNavigationBar(
     }
 }
 
-@Composable
-private fun GiftMiuixPage(
-    context: Context,
-    provider: FeatureSettingsProvider,
-    onBack: () -> Unit
-) {
-    val sp = remember { HchatStorage.preferences(context, GiftSettings.PREFS_NAME) }
-    val listState = rememberLazyListState()
-    val scrollBehavior = MiuixScrollBehavior()
-    val timeFormat = remember { SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()) }
-    var successCount by remember { mutableStateOf(sp.getInt(GiftSettings.KEY_SUCCESS, 0)) }
-    var failedCount by remember { mutableStateOf(sp.getInt(GiftSettings.KEY_FAILED, 0)) }
-    var lastOrder by remember { mutableStateOf(sp.getString(GiftSettings.KEY_LAST_ORDER, "").orEmpty()) }
-    var lastTime by remember { mutableStateOf(sp.getLong(GiftSettings.KEY_LAST_TIME, 0L)) }
-    var delayText by remember { mutableStateOf(sp.getInt(GiftSettings.KEY_DELAY_VALUE, 0).toString()) }
-
-    PageScaffold(
-        title = provider.title(),
-        largeTitle = provider.title(),
-        scrollBehavior = scrollBehavior,
-        bottomBar = { BottomActionBar("返回", onBack) }
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
-            state = listState,
-            contentPadding = PaddingValues(
-                top = padding.calculateTopPadding() + 8.dp,
-                bottom = padding.calculateBottomPadding() + 84.dp
-            )
-        ) {
-            item { SmallTitle(text = "自动领取") }
-            item {
-                SettingsCard {
-                    SwitchRow(
-                        sp,
-                        GiftSettings.KEY_ENABLE,
-                        "自动抢礼物",
-                        "收到礼物消息时自动静默领取",
-                        false
-                    )
-                    SwitchRow(
-                        sp,
-                        GiftSettings.KEY_LOG_ENABLE,
-                        "记录日志",
-                        "在 LSPosed 日志中输出领取过程，便于排查问题",
-                        false
-                    )
-                }
-            }
-            item { SmallTitle(text = "领取设置") }
-            item {
-                SettingsCard {
-                    InputRow(
-                        title = "延迟领取",
-                        summary = "收到礼物后延迟多少毫秒再领取，0 为立即领取",
-                        value = delayText,
-                        onValueChange = { raw ->
-                            val text = raw.filter { it.isDigit() }.take(6)
-                            delayText = text
-                            sp.edit()
-                                .putInt(GiftSettings.KEY_DELAY_VALUE, text.toIntOrNull() ?: 0)
-                                .putInt(GiftSettings.KEY_DELAY_UNIT, 0)
-                                .apply()
-                        }
-                    )
-                }
-            }
-            item { SmallTitle(text = "领取统计") }
-            item {
-                SettingsCard {
-                    InfoRow("成功", successCount.toString())
-                    InfoRow("失败", failedCount.toString())
-                    InfoRow("最近订单", lastOrder.ifEmpty { "无" })
-                    InfoRow("最近时间", if (lastTime > 0L) timeFormat.format(Date(lastTime)) else "无")
-                    InfoRow("刷新统计", "") {
-                        successCount = sp.getInt(GiftSettings.KEY_SUCCESS, 0)
-                        failedCount = sp.getInt(GiftSettings.KEY_FAILED, 0)
-                        lastOrder = sp.getString(GiftSettings.KEY_LAST_ORDER, "").orEmpty()
-                        lastTime = sp.getLong(GiftSettings.KEY_LAST_TIME, 0L)
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun FeatureSettingsPage(
@@ -4603,7 +4508,6 @@ private fun FeatureSettingsPage(
 ) {
     when (provider.featureId()) {
         AutoRedPacketFeature.ID -> RedPacketMiuixPage(context, provider, onBack)
-        AutoGiftFeature.ID -> GiftMiuixPage(context, provider, onBack)
         AutoTransferFeature.ID -> AutoTransferMiuixPage(context, provider, onBack)
         FakeWalletBalanceFeature.ID -> FakeWalletBalanceMiuixPage(context, provider, onBack)
         RealNameTailFeature.ID -> RealNameTailMiuixPage(context, provider, onBack)
@@ -4614,7 +4518,6 @@ private fun FeatureSettingsPage(
         MessageForwardFeature.ID -> MessageForwardMiuixPage(context, provider, onBack)
         SelectedMessagesFeature.ID -> SelectedMessagesMiuixPage(context, provider, onBack)
         CallMediaLimitFeature.ID -> CallMediaLimitMiuixPage(context, provider, onBack)
-        CallRingtoneBlockFeature.ID -> CallRingtoneBlockMiuixPage(context, provider, onBack)
         DisableHotUpdateFeature.ID -> DisableHotUpdateMiuixPage(context, provider, onBack)
         ProfileIdFeature.ID -> ProfileIdMiuixPage(context, provider, onBack)
         QuickContactEditFeature.ID -> QuickContactEditMiuixPage(context, provider, onBack)
@@ -4686,7 +4589,6 @@ private fun FeatureSettingsPage(
         GameEmojiFeature.ID -> GameEmojiMiuixPage(context, provider, onBack)
         MessageBubbleFeature.ID -> MessageBubbleMiuixPage(context, provider, onBack)
         MessageTextColorFeature.ID -> MessageTextColorMiuixPage(context, provider, onBack)
-        HomeTextColorFeature.ID -> HomeTextColorMiuixPage(context, provider, onBack)
         ChatTimeStyleFeature.ID -> ChatTimeStyleMiuixPage(context, provider, onBack)
         InputHintFeature.ID -> InputHintMiuixPage(context, provider, onBack)
         HideChatAvatarFeature.ID -> HideChatAvatarMiuixPage(context, provider, onBack)
@@ -5255,53 +5157,6 @@ private fun CallMediaLimitMiuixPage(
     }
 }
 
-@Composable
-private fun CallRingtoneBlockMiuixPage(
-    context: Context,
-    provider: FeatureSettingsProvider,
-    onBack: () -> Unit
-) {
-    val sp = remember { HchatStorage.preferences(context, CallMediaLimitSettings.PREFS_NAME) }
-    val listState = rememberLazyListState()
-    val scrollBehavior = MiuixScrollBehavior()
-
-    PageScaffold(
-        title = provider.title(),
-        largeTitle = provider.title(),
-        scrollBehavior = scrollBehavior,
-        bottomBar = { BottomActionBar("返回", onBack) }
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
-            state = listState,
-            contentPadding = PaddingValues(
-                top = padding.calculateTopPadding() + 8.dp,
-                bottom = padding.calculateBottomPadding() + 84.dp
-            )
-        ) {
-            item { SmallTitle(text = "通话铃声") }
-            item {
-                SettingsCard {
-                    SwitchRow(
-                        sp,
-                        CallMediaLimitSettings.KEY_BLOCK_INCOMING_RINGTONE,
-                        "屏蔽通话呼入铃声",
-                        "收到微信语音或视频通话时不播放来电铃声",
-                        CallMediaLimitSettings.DEFAULT_BLOCK_INCOMING_RINGTONE
-                    )
-                    InsetDivider()
-                    SwitchRow(
-                        sp,
-                        CallMediaLimitSettings.KEY_BLOCK_OUTGOING_RINGTONE,
-                        "屏蔽通话呼出铃声",
-                        "拨打微信语音或视频通话时不播放等待铃声",
-                        CallMediaLimitSettings.DEFAULT_BLOCK_OUTGOING_RINGTONE
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun StatusTextLimitMiuixPage(

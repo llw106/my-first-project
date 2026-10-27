@@ -8,7 +8,6 @@ import h.Hchat.hooks.items.automessageforward.AutoMessageForwardFeature
 import h.Hchat.hooks.items.autooriginal.AutoOriginalImageFeature
 import h.Hchat.hooks.items.autovieworiginal.AutoViewOriginalFeature
 import h.Hchat.hooks.items.callmedialimit.CallMediaLimitFeature
-import h.Hchat.hooks.items.callmedialimit.CallRingtoneBlockFeature
 import h.Hchat.hooks.items.chattime.ChatTimeStyleFeature
 import h.Hchat.hooks.items.conversationgroup.ConversationGroupFeature
 import h.Hchat.hooks.items.conversationtabs.ConversationTabsFeature
@@ -30,7 +29,6 @@ import h.Hchat.hooks.items.grouprename.GroupRenameMonitorFeature
 import h.Hchat.hooks.items.hideavatar.HideChatAvatarFeature
 import h.Hchat.hooks.items.hidemenu.HideChatMenuFeature
 import h.Hchat.hooks.items.hotupdate.DisableHotUpdateFeature
-import h.Hchat.hooks.items.hometextcolor.HomeTextColorFeature
 import h.Hchat.hooks.items.inputhint.InputHintFeature
 import h.Hchat.hooks.items.keepalive.WeChatKeepAliveFeature
 import h.Hchat.hooks.items.keywordnotify.KeywordNotificationFeature
@@ -60,7 +58,6 @@ import h.Hchat.hooks.items.momentsfake.MomentsFakeInteractionFeature
 import h.Hchat.hooks.items.multirecall.MultiRecallFeature
 import h.Hchat.hooks.items.payment.core.AutoRedPacketFeature
 import h.Hchat.hooks.items.payment.fakebalance.FakeWalletBalanceFeature
-import h.Hchat.hooks.items.payment.gift.AutoGiftFeature
 import h.Hchat.hooks.items.payment.transfer.AutoTransferFeature
 import h.Hchat.hooks.items.patblock.PatBlockFeature
 import h.Hchat.hooks.items.profileid.ProfileIdFeature
@@ -106,7 +103,6 @@ object FeatureRegistry {
             .register(RealNameTailFeature())
             .register(MemberTitleFeature())
             .register(AutoRedPacketFeature())
-            .register(AutoGiftFeature())
             .register(WeChatTabletFeature())
             .register(AutoTransferFeature())
             .register(FakeWalletBalanceFeature())
@@ -135,7 +131,6 @@ object FeatureRegistry {
             .register(RemoveForwardLimitFeature())
             .register(AtAllNotificationBlockFeature())
             .register(CallMediaLimitFeature())
-            .register(CallRingtoneBlockFeature())
             .register(CustomNotificationFeature())
             .register(KeywordNotificationFeature())
             .register(TextSpeechFeature())
@@ -150,7 +145,6 @@ object FeatureRegistry {
             .register(InputHintFeature())
             .register(MessageBubbleFeature())
             .register(MessageTextColorFeature())
-            .register(HomeTextColorFeature())
             .register(HideChatAvatarFeature())
             .register(MessageBlockFeature())
             .register(FakeLocationFeature())
