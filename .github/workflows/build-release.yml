@@ -69,10 +69,14 @@ jobs:
           echo "--- 已安装平台 ---"; ls "$ANDROID_SDK_ROOT/platforms" 2>/dev/null || true
           echo "--- 已安装 build-tools ---"; ls "$ANDROID_SDK_ROOT/build-tools" 2>/dev/null || true
 
-      - name: Gradle 缓存
-        uses: gradle/actions/setup-gradle@v4
+      - name: 使用 Gradle 官方缓存
+        uses: actions/cache@v4
         with:
-          cache-read-only: false
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
 
       - name: 准备签名证书
         env:
