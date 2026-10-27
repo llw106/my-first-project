@@ -247,30 +247,16 @@ internal object ConversationGroupHomeProjection {
                     if (isActive(installation)) enterQuery(installation)
                 }
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
                     if (!isActive(installation)) return
-                    if (param.hasThrowable()) return
+                    if (param.hasThrowable()) {
+                        leaveQuery(installation)
+                        return
+                    }
                     updates.firstOrNull { it.declaringClass.isInstance(param.thisObject) }
                         ?.let { captureRefresh(installation, param.thisObject, Refresh(it)) }
-                    val hidden = if (hasTabFilterInQuery()) emptySet() else hiddenIds()
-                    if (hidden.isEmpty()) return
-                    runCatching {
-                        val result = param.result ?: return
-                        val rows = KavaReflector.readField(listField, result) as? List<*> ?: return
-                        val filtered = rows.filterNot { username(it) in hidden }
-                        if (filtered.size != rows.size) {
-                            if (rows is MutableList<*>) {
-                                @Suppress("UNCHECKED_CAST")
-                                val mutable = rows as MutableList<Any?>
-                                mutable.clear()
-                                mutable.addAll(filtered)
-                            } else {
-                                check(KavaReflector.writeField(listField, result, ArrayList(filtered)))
-                            }
-                        }
-                        // Keep native hasMore and next flag unchanged, including completely hidden pages.
-                    }.onFailure { HLog.e("$TAG 过滤首页分页失败", it) }
-                    } finally { leaveQuery(installation) }
+                    // 不再就地增删原生分页列表：那会让 RecyclerView 回收 attached view 时断言失败，导致首页闪退。
+                    // 隐藏会话由 visible(row) 钩子逐行拦截，效果一致但不破坏列表结构。
+                    leaveQuery(installation)
                 }
             }, installation)
             hook(visible, object : XC_MethodHook() {

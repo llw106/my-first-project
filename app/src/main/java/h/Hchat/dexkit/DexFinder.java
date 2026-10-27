@@ -42,7 +42,15 @@ public class DexFinder {
     private static final String CACHE_COMPLETE = "cache.complete";
     private static final String CACHE_KEY = "cache.key";
     private static final String CACHE_SNAPSHOT_VERSION_KEY = "cache.snapshot.version";
-    private static final String CACHE_SNAPSHOT_VERSION = "2";
+    private static final String CACHE_SNAPSHOT_VERSION = "3";
+    // 快照必须包含的字段：缺任何一个说明是旧代码写入的残缺缓存，直接重建
+    private static final String[] REQUIRED_CACHE_KEYS = {
+            "addMsgClasses",
+            "chatFooterSendClickMethod",
+            "voiceMessagePathMethod",
+            "coreStorageGetter",
+            "sqliteDbWrapperClass"
+    };
     private static final String LOCATOR_WISH_COMPLETE = "locator.wish.complete";
     private static final String LOCATOR_PACKET_COMPLETE = "locator.packet.complete";
     private static final String LOCATOR_ECS_COMPLETE = "locator.ecs.complete";
@@ -3509,6 +3517,12 @@ public class DexFinder {
             }
             if (!CACHE_SNAPSHOT_VERSION.equals(
                     cachePrefs.getString(CACHE_SNAPSHOT_VERSION_KEY, ""))) return false;
+            for (String requiredKey : REQUIRED_CACHE_KEYS) {
+                if (!cachePrefs.contains(requiredKey)) {
+                    h.Hchat.utils.HLog.e(TAG + " 快照缺少字段[" + requiredKey + "]，将重建缓存");
+                    return false;
+                }
+            }
 
             addMsgClasses = loadClassList("addMsgClasses");
             receiveLuckyMoneyClass = loadClass("receiveLuckyMoneyClass");
@@ -5443,6 +5457,20 @@ public class DexFinder {
         if (sqliteDbWrapperClass == null) {
             h.Hchat.utils.HLog.e(TAG + " 数据库wrapper未找到");
         }
+            if (chatFooterSendClickMethod == null) {
+                h.Hchat.utils.HLog.e(TAG + " 聊天页发送按钮入口未找到");
+            }
+            if (voiceMessagePathMethod == null) {
+                h.Hchat.utils.HLog.e(TAG + " 语音路径方法未找到(已启用磁盘兜底)");
+            }
+            h.Hchat.utils.HLog.e(TAG + " 关键字段自检: addMsg="
+                    + (addMsgClasses == null ? -1 : addMsgClasses.size())
+                    + " 发送按钮=" + (chatFooterSendClickMethod != null)
+                    + " 聊天页start=" + (chatPageStartMethod != null)
+                    + " 文本发送类=" + (sendTextMsgClass != null)
+                    + " 语音路径=" + (voiceMessagePathMethod != null)
+                    + " DB=" + (sqliteDbWrapperClass != null && coreStorageGetter != null)
+                    + " 收藏=" + (favoriteServiceClass != null));
             if (chatPageStartMethod == null
                     || chatPageFragmentEnterMethod == null
                     || chatPageFragmentExitMethod == null) {
