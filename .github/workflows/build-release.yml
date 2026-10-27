@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HCAT_VERSION_NAME: ${{ github.event.inputs.version_name || '6.6.6.patch8' }}
-      HCAT_VERSION_CODE: ${{ github.event.inputs.version_code || '567' }}
+      HCAT_VERSION_CODE: ${{ github.event.inputs.version_code || '568' }}
       HCAT_APK_NAME: ${{ github.event.inputs.apk_name || 'Hchat-6.6.6.patch8-signed.apk' }}
       HCAT_STORE_PASSWORD: ${{ secrets.HCAT_STORE_PASSWORD || 'hchat123456' }}
       HCAT_KEY_ALIAS: ${{ secrets.HCAT_KEY_ALIAS || 'hchat' }}
