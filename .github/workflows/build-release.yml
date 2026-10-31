@@ -12,15 +12,15 @@ on:
       version_name:
         description: 版本名
         required: false
-        default: 6.6.6.patch8
+        default: 6.6.6.patch9
       version_code:
         description: 版本号（整数）
         required: false
-        default: "568"
+        default: "569"
       apk_name:
         description: 产物文件名
         required: false
-        default: Hchat-6.6.6.patch8-signed.apk
+        default: Hchat-6.6.6.patch9-signed.apk
   push:
     branches: [main]
     paths:
@@ -34,9 +34,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      HCAT_VERSION_NAME: ${{ github.event.inputs.version_name || '6.6.6.patch8' }}
-      HCAT_VERSION_CODE: ${{ github.event.inputs.version_code || '568' }}
-      HCAT_APK_NAME: ${{ github.event.inputs.apk_name || 'Hchat-6.6.6.patch8-signed.apk' }}
+      HCAT_VERSION_NAME: ${{ github.event.inputs.version_name || '6.6.6.patch9' }}
+      HCAT_VERSION_CODE: ${{ github.event.inputs.version_code || '569' }}
+      HCAT_APK_NAME: ${{ github.event.inputs.apk_name || 'Hchat-6.6.6.patch9-signed.apk' }}
       HCAT_STORE_PASSWORD: ${{ secrets.HCAT_STORE_PASSWORD || 'hchat123456' }}
       HCAT_KEY_ALIAS: ${{ secrets.HCAT_KEY_ALIAS || 'hchat' }}
       HCAT_KEY_PASSWORD: ${{ secrets.HCAT_KEY_PASSWORD || 'hchat123456' }}

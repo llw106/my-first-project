@@ -262,6 +262,8 @@ import h.Hchat.hooks.items.emojisave.EmojiSaveFeature
 import h.Hchat.hooks.items.emojisave.EmojiSaveSettings
 import h.Hchat.hooks.items.fakelocation.FakeLocationFeature
 import h.Hchat.hooks.items.fakelocation.FakeLocationSettings
+import h.Hchat.hooks.items.sportstep.SportStepFeature
+import h.Hchat.hooks.items.sportstep.SportStepSettings
 import h.Hchat.hooks.items.fakescancamera.FakeScanCameraFeature
 import h.Hchat.hooks.items.fakescancamera.FakeScanCameraSettings
 import h.Hchat.hooks.items.fakevoiceduration.FakeVoiceDurationFeature
@@ -3201,6 +3203,7 @@ private fun practicalFeatureGroups(
                 SkipMiniProgramVideoAdsFeature.ID,
                 SkipGlobalMiniProgramSplashAdsFeature.ID,
                 FakeLocationFeature.ID,
+                SportStepFeature.ID,
                 GameEmojiFeature.ID,
                 FakeScanCameraFeature.ID,
                 FinderMediaDownloadFeature.ID,
@@ -3865,6 +3868,7 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         SkipMiniProgramVideoAdsFeature.ID -> listOf("跳过小程序视频广告", "小程序广告", "视频广告")
         SkipGlobalMiniProgramSplashAdsFeature.ID -> listOf("跳过全局小程序开屏广告", "小程序开屏广告", "启动广告", "全局广告")
         FakeLocationFeature.ID -> listOf("虚拟定位", "模拟定位", "小程序定位", "微信地图", "地图选点", "搜索地点", "经纬度", "GPS")
+        SportStepFeature.ID -> listOf("步数", "微信运动", "刷步", "计步", "运动步数")
         GameEmojiFeature.ID -> listOf("指定骰子猜拳", "自定义骰子", "骰子点数", "猜拳结果", "剪刀", "石头", "布", "发送时选择")
         VoiceForwardFeature.ID -> listOf("语音转发", "语音保存", "合并语音", "合并MP3", "转发弹窗", "好友列表", "群聊列表", "语音列表", "批量转发")
         ScheduledTaskFeature.ID -> listOf("定时任务", "定时发送", "群发任务", "计划发送", "循环发送", "每日发送", "每周发送", "朋友圈", "图文", "视文")
@@ -4586,6 +4590,7 @@ private fun FeatureSettingsPage(
         SkipMiniProgramVideoAdsFeature.ID -> SkipMiniProgramVideoAdsMiuixPage(context, provider, onBack)
         SkipGlobalMiniProgramSplashAdsFeature.ID -> SkipGlobalMiniProgramSplashAdsMiuixPage(context, provider, onBack)
         FakeLocationFeature.ID -> FakeLocationMiuixPage(context, provider, onBack)
+        SportStepFeature.ID -> SportStepMiuixPage(context, provider, onBack)
         GameEmojiFeature.ID -> GameEmojiMiuixPage(context, provider, onBack)
         MessageBubbleFeature.ID -> MessageBubbleMiuixPage(context, provider, onBack)
         MessageTextColorFeature.ID -> MessageTextColorMiuixPage(context, provider, onBack)
@@ -17106,6 +17111,123 @@ private fun copyFakeLocationCoordinate(context: Context, label: String, text: St
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
     clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
     Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+}
+
+@Composable
+private fun SportStepMiuixPage(
+    context: Context,
+    provider: FeatureSettingsProvider,
+    onBack: () -> Unit
+) {
+    val sp = remember { HchatStorage.preferences(context, SportStepSettings.PREFS_NAME) }
+    var enabled by remember {
+        mutableStateOf(sp.getBoolean(SportStepSettings.KEY_ENABLE, SportStepSettings.DEFAULT_ENABLE))
+    }
+    var mode by remember {
+        mutableStateOf(sp.getInt(SportStepSettings.KEY_MODE, SportStepSettings.DEFAULT_MODE))
+    }
+    var value by remember {
+        mutableStateOf(sp.getString(SportStepSettings.KEY_VALUE, SportStepSettings.DEFAULT_VALUE).orEmpty())
+    }
+    var showInput by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val scrollBehavior = MiuixScrollBehavior()
+    PageScaffold(
+        title = provider.title(),
+        largeTitle = provider.title(),
+        scrollBehavior = scrollBehavior,
+        bottomBar = { BottomActionBar("返回", onBack) }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
+            state = listState,
+            contentPadding = PaddingValues(
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 84.dp
+            )
+        ) {
+            item { SmallTitle(text = "步数") }
+            item {
+                SettingsCard {
+                    SwitchRow(
+                        checked = enabled,
+                        title = "启用微信步数修改",
+                        summary = "改写微信从计步传感器读到的累计步数",
+                        onCheckedChange = {
+                            enabled = it
+                            sp.edit().putBoolean(SportStepSettings.KEY_ENABLE, it).apply()
+                        }
+                    )
+                    InsetDivider()
+                    ActionRow(
+                        title = "修改方式",
+                        summary = if (mode == SportStepSettings.MODE_MULTIPLY) "按真实步数放大" else "固定为设定步数"
+                    ) {
+                        mode = if (mode == SportStepSettings.MODE_MULTIPLY) {
+                            SportStepSettings.MODE_TARGET
+                        } else {
+                            SportStepSettings.MODE_MULTIPLY
+                        }
+                        sp.edit().putInt(SportStepSettings.KEY_MODE, mode).apply()
+                    }
+                    InsetDivider()
+                    ActionRow(
+                        title = if (mode == SportStepSettings.MODE_MULTIPLY) "放大倍数" else "目标步数",
+                        summary = if (mode == SportStepSettings.MODE_MULTIPLY) "${value} 倍" else "$value 步"
+                    ) { showInput = true }
+                }
+            }
+            item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "说明") }
+            item {
+                SettingsCard {
+                    InfoRow("生效范围", "微信运动读取计步传感器时")
+                    InsetDivider()
+                    InfoRow("计算方式", "以当天首次读取到的累计步数为基准")
+                    InsetDivider()
+                    InfoRow("注意", "启用前当天已走的步数无法扣除，结果可能略高于目标")
+                }
+            }
+        }
+    }
+    if (showInput) {
+        WindowDialog(
+            show = true,
+            title = if (mode == SportStepSettings.MODE_MULTIPLY) "放大倍数" else "目标步数",
+            onDismissRequest = { showInput = false },
+            content = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    InputRow(
+                        if (mode == SportStepSettings.MODE_MULTIPLY) "倍数" else "步数",
+                        if (mode == SportStepSettings.MODE_MULTIPLY) "例如 2 表示两倍" else "例如 80000",
+                        value
+                    ) { input -> value = input.filter { it.isDigit() || it == '.' } }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TextButton(
+                            text = "取消",
+                            onClick = { showInput = false },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.textButtonColorsPrimary()
+                        )
+                        TextButton(
+                            text = "保存",
+                            onClick = {
+                                val parsed = value.toDoubleOrNull()
+                                if (parsed != null && parsed > 0.0) {
+                                    sp.edit().putString(SportStepSettings.KEY_VALUE, value).apply()
+                                }
+                                showInput = false
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.textButtonColorsPrimary()
+                        )
+                    }
+                }
+            }
+        )
+    }
 }
 
 @Composable
