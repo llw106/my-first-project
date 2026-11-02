@@ -1,6 +1,7 @@
 package h.Hchat.hooks.items.moments
 
 import android.content.Context
+import android.content.SharedPreferences
 import de.robv.android.xposed.XC_MethodHook
 import h.Hchat.hooks.core.BaseFeature
 import h.Hchat.hooks.core.FeatureContext
@@ -8,6 +9,7 @@ import h.Hchat.hooks.core.HookRegistry
 import h.Hchat.preferences.HchatStorage
 import h.Hchat.utils.HLog
 import h.Hchat.utils.KavaReflector
+import java.io.File
 import java.util.HashSet
 
 class RemoveMomentsAdsFeature : BaseFeature() {
@@ -29,15 +31,39 @@ class RemoveMomentsAdsFeature : BaseFeature() {
         private const val AD_INFO_CLASS = "com.tencent.mm.plugin.sns.storage.ADInfo"
         private val installedLoaders = HashSet<String>()
         private val hitCount = java.util.concurrent.atomic.AtomicInteger()
+        private val stampLock = Any()
+        private val FAST_KV_SUFFIXES = arrayOf(".kva", ".kvb", ".kvc")
+
+        @Volatile
+        private var lastStamp = Long.MIN_VALUE
 
         @JvmStatic
         fun isEnabled(context: Context?): Boolean {
             if (context == null) return false
-            val sp = HchatStorage.preferences(context, RemoveMomentsAdsSettings.PREFS_NAME)
-            return sp.getBoolean(
+            val app = context.applicationContext ?: context
+            return prefsFor(app).getBoolean(
                 RemoveMomentsAdsSettings.KEY_ENABLE,
                 RemoveMomentsAdsSettings.DEFAULT_ENABLE
             )
+        }
+
+        /**
+         * 开关配置是 FastKV（mmap）存储，设置页写入后当前进程的缓存实例读不到新值。
+         * 这里按配置文件的时间戳判断是否变化，变了就重开，保证"关掉开关立刻停止拦截"。
+         */
+        private fun prefsFor(context: Context): SharedPreferences {
+            val dir = HchatStorage.storageDir(context)
+            val name = RemoveMomentsAdsSettings.PREFS_NAME
+            val stamp = FAST_KV_SUFFIXES.maxOfOrNull { suffix ->
+                File(dir, name + suffix).lastModified()
+            } ?: 0L
+            synchronized(stampLock) {
+                if (stamp != lastStamp) {
+                    lastStamp = stamp
+                    return HchatStorage.reopen(context, name)
+                }
+                return HchatStorage.preferences(context, name)
+            }
         }
 
         @JvmStatic
