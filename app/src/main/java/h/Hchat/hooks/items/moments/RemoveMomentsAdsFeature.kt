@@ -28,6 +28,7 @@ class RemoveMomentsAdsFeature : BaseFeature() {
         private const val TAG = "[Hchat:MomentsAds]"
         private const val AD_INFO_CLASS = "com.tencent.mm.plugin.sns.storage.ADInfo"
         private val installedLoaders = HashSet<String>()
+        private val hitCount = java.util.concurrent.atomic.AtomicInteger()
 
         @JvmStatic
         fun isEnabled(context: Context?): Boolean {
@@ -60,9 +61,14 @@ class RemoveMomentsAdsFeature : BaseFeature() {
                         override fun beforeHookedMethod(param: MethodHookParam) {
                             if (!isEnabled(context)) return
                             param.result = null
+                            val count = hitCount.incrementAndGet()
+                            if (count <= 5) {
+                                HLog.e("$TAG 已拦截朋友圈广告信息 #$count")
+                            }
                         }
                     })
                     installedLoaders.add(key)
+                    HLog.e("$TAG 去广告 Hook 已安装: $AD_INFO_CLASS(String)")
                 }.onFailure {
                     HLog.e("$TAG Hook 朋友圈广告信息失败: ${it.message}", it)
                 }
