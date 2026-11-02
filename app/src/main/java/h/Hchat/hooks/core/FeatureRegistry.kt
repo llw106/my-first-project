@@ -43,6 +43,7 @@ import h.Hchat.hooks.items.moments.MomentsPostNotificationFeature
 import h.Hchat.hooks.items.moments.RemoveMomentsAdsFeature
 import h.Hchat.hooks.items.moments.SnsAntiRecallFeature
 import h.Hchat.hooks.items.moments.MomentsUploadTailFeature
+import h.Hchat.hooks.items.moments.MomentsLocationFeature
 import h.Hchat.hooks.items.momentsfake.MomentsFakeInteractionFeature
 import h.Hchat.hooks.items.multirecall.MultiRecallFeature
 import h.Hchat.hooks.items.payment.core.AutoRedPacketFeature
@@ -136,6 +137,7 @@ object FeatureRegistry {
             .register(MomentsUploadTailFeature())
             .register(SnsAntiRecallFeature())
             .register(MomentsFakeInteractionFeature())
+            .register(MomentsLocationFeature())
             .register(GroupChatLabelFeature())
             .register(GroupLeaveMonitorFeature())
             .register(RemoveMomentsAdsFeature())
