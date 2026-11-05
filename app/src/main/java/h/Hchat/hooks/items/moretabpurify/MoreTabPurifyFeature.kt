@@ -53,6 +53,15 @@ private class MoreTabPurifyHooker(
     @Volatile
     private var installed = false
 
+    /**
+     * 影子表：key -> 被隐藏的 Preference 实例。
+     *
+     * 微信「我」页里有些逻辑会按 key 从列表回取条目（典型：MoreTabUI.s1() 取
+     * "settings_my_album" 来刷新朋友圈红点）。条目被隐藏后这些调用会拿到 null 并
+     * 直接 NPE 崩溃，所以移除前留一份影子，查询兜底时把它交回去。
+     */
+    private val shadow = java.util.concurrent.ConcurrentHashMap<String, Any>()
+
     @Synchronized
     fun install(): Boolean {
         if (installed) return true
@@ -75,6 +84,33 @@ private class MoreTabPurifyHooker(
                     .onFailure { HLog.e("$TAG 处理异常: ${it.message}", it) }
             }
         }
+
+        // 兜底 1：微信按 key 回取条目时，若已被隐藏则把影子对象交回去，避免 NPE。
+        runCatching {
+            val screenClass = classLoader.loadClass("com.tencent.mm.ui.base.preference.g0")
+            val lookup = screenClass.getDeclaredMethod("h", String::class.java)
+            HookRegistry.get().hook(lookup, object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    if (param.result != null) return
+                    val key = param.args.getOrNull(0) as? String ?: return
+                    val spare = shadow[key] ?: return
+                    param.result = spare
+                }
+            })
+            HLog.i("$TAG 查询兜底 Hook 已安装 (g0.h)")
+        }.onFailure { HLog.e("$TAG 查询兜底 Hook 失败: ${it.message}", it) }
+
+        // 兜底 2：MoreTabUI.s1() 只刷新「朋友圈」红点，条目隐藏后对象缺失会崩，直接跳过。
+        runCatching {
+            val moreTabClass = classLoader.loadClass("com.tencent.mm.ui.MoreTabUI")
+            val s1 = moreTabClass.getDeclaredMethod("s1")
+            HookRegistry.get().hook(s1, object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    param.result = null
+                }
+            })
+            HLog.i("$TAG 红点刷新跳过 Hook 已安装 (MoreTabUI.s1)")
+        }.onFailure { HLog.e("$TAG MoreTabUI.s1 跳过失败: ${it.message}", it) }
 
         return runCatching {
             activityCreated?.let { HookRegistry.get().hook(it, callback) }
@@ -120,10 +156,16 @@ private class MoreTabPurifyHooker(
 
         if (toRemove.isEmpty()) return
         var removed = 0
+        val recordedKeys = ArrayList<String>()
         for (item in toRemove) {
+            val key = keyOf(item)
+            if (key.isNotEmpty()) {
+                shadow[key] = item
+                recordedKeys.add(key)
+            }
             if (removePreference(screen, item)) removed++
         }
-        HLog.e("$TAG 我页隐藏 $removed/${toRemove.size} 项 (${hiddenTitles.joinToString("|")})，当前条目=${titles.joinToString("|")}")
+        HLog.e("$TAG 我页隐藏 $removed/${toRemove.size} 项 (${hiddenTitles.joinToString("|")})，key=${recordedKeys.joinToString("|")}，当前条目=${titles.joinToString("|")}")
     }
 
     private fun screenOf(fragment: Any): Any? {
@@ -144,6 +186,12 @@ private class MoreTabPurifyHooker(
         return runCatching {
             screen.javaClass.getMethod("i").invoke(screen) as? List<*>
         }.getOrNull()
+    }
+
+    /** Preference.q 是微信条目的 key（例：朋友圈 = settings_my_album）。 */
+    private fun keyOf(preference: Any): String {
+        val field = runCatching { preference.javaClass.getField("q") }.getOrNull() ?: return ""
+        return runCatching { field.get(preference) as? String }.getOrNull().orEmpty()
     }
 
     private fun titleOf(preference: Any): String {

@@ -1,4 +1,3 @@
-// 构建触发标记
 package h.Hchat.hooks.items.moretabpurify
 
 import android.content.SharedPreferences
@@ -21,8 +20,19 @@ object MoreTabPurifySettings {
     /** 「设置」永远保留，关掉会导致无法进入设置 */
     const val PROTECTED_ITEM = "设置"
 
-    /** 内置候选条目，首次进入时先展示这些 */
-    val KNOWN_ITEMS = listOf("服务", "收藏", "朋友圈", "表情", "小店与卡包", "视频号")
+    /**
+     * 内置候选条目：按微信 8.0.80 实际观测到的顺序。
+     *
+     * 实测「我」页真实条目为：
+     * 个人信息 / 服务 / 收藏 / 朋友圈 / 作品 / 视频号 / 订单与卡包 / 小店与卡包 / 表情 / 设置 / WeUI
+     */
+    val KNOWN_ITEMS = listOf(
+        "个人信息", "服务", "收藏", "朋友圈", "作品",
+        "视频号", "订单与卡包", "小店与卡包", "表情"
+    )
+
+    /** 内部条目，不作为用户开关暴露 */
+    val INTERNAL_ITEMS = listOf("WeUI")
 
     fun hidden(sp: SharedPreferences): Set<String> {
         return try {
@@ -72,7 +82,9 @@ object MoreTabPurifySettings {
         val list = ArrayList<String>()
         for (item in KNOWN_ITEMS) list.add(item)
         for (item in discovered(sp)) {
-            if (item != PROTECTED_ITEM && !list.contains(item)) list.add(item)
+            if (item == PROTECTED_ITEM) continue
+            if (INTERNAL_ITEMS.contains(item)) continue
+            if (!list.contains(item)) list.add(item)
         }
         return list
     }
