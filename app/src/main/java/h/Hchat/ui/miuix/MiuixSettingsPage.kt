@@ -30,7 +30,8 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.view.animation.Interpolator
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
 import android.webkit.WebView
 import android.widget.DatePicker
 import android.widget.FrameLayout
@@ -902,25 +903,20 @@ private fun RegisterSettingsBackHandler(onBack: (() -> Unit)?) {
 object MiuixSettingsPage {
     private const val PAGE_TAG = "Hchat:MiuixSettingsPage"
 
-    // 直接复用设置页内部二级页面（NavDisplay + NavTransitions.MiuixDefault）的真实速率：
-    // NavMotion 默认 programmatic = Tween(500ms, NavProgrammaticEasing = NavSettleEasing(0.8, 0.95))。
-    private const val NAV_SETTLE_DURATION_MS = 500L
-    // NavProgrammaticEasing = NavSettleEasing(0.8, 0.95) 的等价实现（该类在库内为 internal，无法直接引用）。
-    private val NAV_SETTLE_INTERPOLATOR: Interpolator = object : Interpolator {
-        private val cycle = 2.0 * Math.PI / 0.8
-        private val cycleSq = cycle * cycle
-        private val damping = 4.0 * Math.PI * 0.95 / 0.8
-        private val w = Math.sqrt(4.0 * cycleSq - damping * damping) / 2.0
-        private val r = -damping / 2.0
-        private val c2 = r / w
-
-        override fun getInterpolation(input: Float): Float {
-            val t = input.toDouble().coerceIn(0.0, 1.0)
-            val v = 1.0 + Math.exp(r * t) * (c2 * Math.sin(w * t) - Math.cos(w * t))
-            return v.toFloat().coerceIn(0f, 1f)
-        }
+    // 进入/退出直接复用微信原生页面转场（res/anim）：
+    //   进入 240ms：新页 fromXDelta=+75%p -> 0，旧页 0 -> -30%p，DecelerateInterpolator(1.2)
+    //   退出 300ms：新页 0 -> +100%p，旧页 -30%p -> 0，PathInterpolator(0, 0, 0.2, 1)
+    private const val WX_PUSH_DURATION_MS = 240L
+    private const val WX_POP_DURATION_MS = 300L
+    private const val WX_ENTER_OFFSET = 0.75f
+    private const val WX_COVER_OFFSET = 0.30f
+    private fun animDuration(context: Context, base: Long): Long {
+        val scale = runCatching {
+            Settings.Global.getFloat(context.contentResolver, Settings.Global.WINDOW_ANIMATION_SCALE, 1f)
+        }.getOrDefault(1f)
+        if (scale <= 0f) return 0L
+        return (base * scale).toLong()
     }
-
     private class SettingsPageHostTag(val floatingAgent: Boolean) {
         var close: (() -> Unit)? = null
         var collapseAgent: (() -> Unit)? = null
@@ -992,6 +988,13 @@ object MiuixSettingsPage {
         val configVersion = mutableStateOf(0)
         val settingsBackHandlers = SettingsBackHandlerRegistry()
         lateinit var page: FrameLayout
+        var previousViews: List<View> = emptyList()
+        var previousTranslationX: Map<View, Float> = emptyMap()
+        fun resetPreviousViews() {
+            previousViews.forEach { previous ->
+                if (previous.parent === decor) previous.translationX = previousTranslationX[previous] ?: 0f
+            }
+        }
         val activityBackHooks = ArrayList<XC_MethodHook.Unhook>()
         var consumingBack = false
         var closed = false
@@ -1032,15 +1035,29 @@ object MiuixSettingsPage {
             settingsBackHandlers.clear()
             unhookActivityBack()
             val canAnimate = page.isAttachedToWindow && page.parent === decor && page.width > 0
-            if (canAnimate) {
+            val popDuration = if (canAnimate) animDuration(activity, WX_POP_DURATION_MS) else 0L
+            if (canAnimate && popDuration > 0L) {
+                val popInterpolator = PathInterpolator(0f, 0f, 0.2f, 1f)
+                previousViews.forEach { previous ->
+                    if (previous.parent === decor) {
+                        previous.animate()
+                            .translationX(0f)
+                            .setDuration(popDuration)
+                            .setInterpolator(popInterpolator)
+                            .start()
+                    }
+                }
                 page.animate()
-                    .translationX(page.width * 0.25f)
-                    .alpha(0.9f)
-                    .setDuration(NAV_SETTLE_DURATION_MS)
-                    .setInterpolator(NAV_SETTLE_INTERPOLATOR)
-                    .withEndAction { finishClose() }
+                    .translationX(page.width.toFloat())
+                    .setDuration(popDuration)
+                    .setInterpolator(popInterpolator)
+                    .withEndAction {
+                        resetPreviousViews()
+                        finishClose()
+                    }
                     .start()
             } else {
+                resetPreviousViews()
                 finishClose()
             }
         }
@@ -1271,6 +1288,8 @@ object MiuixSettingsPage {
             return
         }
 
+        previousViews = (0 until decor.childCount).map { decor.getChildAt(it) }
+        previousTranslationX = previousViews.associateWith { it.translationX }
         try {
             page.addView(
                 composeView,
@@ -1292,16 +1311,27 @@ object MiuixSettingsPage {
         installActivityBackHooks()
         page.requestFocus()
         val slideWidth = if (decor.width > 0) decor.width else activity.resources.displayMetrics.widthPixels
-        // NavTransitions.MiuixDefault(relDepth = 1)：从右侧 25% 屏宽滑入，透明度 0.9 -> 1；
-        // 速率与 NavMotion 默认 programmatic 相同（500ms + NavProgrammaticEasing）。
-        page.translationX = slideWidth * 0.25f
-        page.alpha = 0.9f
-        page.animate()
-            .translationX(0f)
-            .alpha(1f)
-            .setDuration(NAV_SETTLE_DURATION_MS)
-            .setInterpolator(NAV_SETTLE_INTERPOLATOR)
-            .start()
+        val pushDuration = animDuration(activity, WX_PUSH_DURATION_MS)
+        if (pushDuration > 0L) {
+            val pushInterpolator = DecelerateInterpolator(1.2f)
+            val coverShift = slideWidth * WX_COVER_OFFSET
+            previousViews.forEach { previous ->
+                if (previous.parent === decor) {
+                    val from = previousTranslationX[previous] ?: 0f
+                    previous.animate()
+                        .translationX(from - coverShift)
+                        .setDuration(pushDuration)
+                        .setInterpolator(pushInterpolator)
+                        .start()
+                }
+            }
+            page.translationX = slideWidth * WX_ENTER_OFFSET
+            page.animate()
+                .translationX(0f)
+                .setDuration(pushDuration)
+                .setInterpolator(pushInterpolator)
+                .start()
+        }
     }
 
     private fun findExistingPage(decor: ViewGroup): View? {
