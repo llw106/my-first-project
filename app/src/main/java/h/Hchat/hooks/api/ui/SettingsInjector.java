@@ -359,7 +359,8 @@ public class SettingsInjector {
                     return groupSettingItemClass;
                 }
                 if (fReturns1 != null && fReturns1.equals(name)) {
-                    return 1;
+                    // 这个 int 是条目布局类型：1=分组标题样式，2=普通条目样式
+                    return targetMore ? 2 : 1;
                 }
                 if (fOnClick.equals(name) && args != null && args.length > 0) {
                     Context ctx = (Context) args[0];
@@ -382,12 +383,6 @@ public class SettingsInjector {
                 if (fNameResId.equals(name)) {
                     return HCHAT_SETTING_ITEM_NAME_RES_ID;
                 }
-                if (method.getParameterCount() == 0
-                        && method.getReturnType() == String.class
-                        && "c8".equals(name)) {
-                    return PREFS_TITLE;
-                }
-
                 // 抽象方法返回默认值
                 if (KavaReflector.isAbstract(method)) {
                     Class<?> rt = method.getReturnType();
