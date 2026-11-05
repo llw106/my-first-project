@@ -735,14 +735,9 @@ public class DexFinder {
                     });
 
             for (Class<?> cl : candidates) {
-                Constructor<?> longCtor = findCtorByExactTypes(
-                        cl, String.class, String.class, int.class, int.class, long.class);
-                Constructor<?> objectCtor = findCtorByExactTypes(
-                        cl, String.class, String.class, int.class, int.class, Object.class);
-                if (longCtor != null || objectCtor != null) {
+                applySendTextCtors(cl);
+                if (sendTextMsgCtorLong != null || sendTextMsgCtorObject != null) {
                     sendTextMsgClass = cl;
-                    sendTextMsgCtorLong = longCtor;
-                    sendTextMsgCtorObject = objectCtor;
                     break;
                 }
             }
@@ -3666,10 +3661,7 @@ public class DexFinder {
             unionOpenCtor10 = findCtorByArgCount(openLuckyMoneyUnionClass, 10);
             unionOpenCtor9 = findCtorByArgCount(openLuckyMoneyUnionClass, 9);
             wishWxHbCtor = findCtorByArgCount(wishWxHbClass, 4);
-            sendTextMsgCtorLong = findCtorByExactTypes(
-                    sendTextMsgClass, String.class, String.class, int.class, int.class, long.class);
-            sendTextMsgCtorObject = findCtorByExactTypes(
-                    sendTextMsgClass, String.class, String.class, int.class, int.class, Object.class);
+            applySendTextCtors(sendTextMsgClass);
             if (localMessageClass == null && localMessageInsertMethod != null
                     && localMessageInsertMethod.getParameterTypes().length == 1) {
                 localMessageClass = localMessageInsertMethod.getParameterTypes()[0];
@@ -5309,6 +5301,51 @@ public class DexFinder {
         return params.length == 2
                 && params[0] == String.class
                 && (params[1] == long.class || params[1] == Long.class);
+    }
+
+    /**
+     * 8.0.80 起 NetSceneSendMsg 的构造器尾巴多了一个 String（msgSource/key 用），
+     * 所以先按 5 参精确找，找不到再按「5 参前缀 + 尾部 String/Object」兼容找。
+     */
+    private void applySendTextCtors(Class<?> cl) {
+        if (cl == null) return;
+        sendTextMsgCtorLong = findCtorByExactTypes(
+                cl, String.class, String.class, int.class, int.class, long.class);
+        if (sendTextMsgCtorLong == null) {
+            sendTextMsgCtorLong = findCtorByPrefixTypes(
+                    cl, String.class, String.class, int.class, int.class, long.class);
+        }
+        sendTextMsgCtorObject = findCtorByExactTypes(
+                cl, String.class, String.class, int.class, int.class, Object.class);
+        if (sendTextMsgCtorObject == null) {
+            sendTextMsgCtorObject = findCtorByPrefixTypes(
+                    cl, String.class, String.class, int.class, int.class, Object.class);
+        }
+    }
+
+    private Constructor<?> findCtorByPrefixTypes(Class<?> cl, Class<?>... types) {
+        if (cl == null || types == null) return null;
+        for (Constructor<?> c : KavaReflector.declaredConstructors(cl)) {
+            Class<?>[] params = c.getParameterTypes();
+            if (params.length <= types.length) continue;
+            boolean match = true;
+            for (int i = 0; i < types.length; i++) {
+                if (params[i] != types[i]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (!match) continue;
+            boolean tailOk = true;
+            for (int i = types.length; i < params.length; i++) {
+                if (params[i] != String.class && params[i] != Object.class) {
+                    tailOk = false;
+                    break;
+                }
+            }
+            if (tailOk) return c;
+        }
+        return null;
     }
 
     private Constructor<?> findCtorByExactTypes(Class<?> cl, Class<?>... types) {

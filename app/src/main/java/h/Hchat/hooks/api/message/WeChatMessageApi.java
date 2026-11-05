@@ -775,18 +775,21 @@ public final class WeChatMessageApi {
         if (sourceArgs != null) {
             Constructor<?> objectCtor = dexFinder.sendTextMsgCtorObject;
             if (objectCtor != null) {
-                return KavaReflector.newInstance(objectCtor, talker, content, messageType, sendFlag, sourceArgs);
+                Object request = instantiateTextRequest(objectCtor, talker, content, messageType, sendFlag, sourceArgs);
+                if (request != null) return request;
             }
         }
 
         Constructor<?> longCtor = dexFinder.sendTextMsgCtorLong;
         if (longCtor != null) {
-            return KavaReflector.newInstance(longCtor, talker, content, messageType, sendFlag, 0L);
+            Object request = instantiateTextRequest(longCtor, talker, content, messageType, sendFlag, 0L);
+            if (request != null) return request;
         }
 
         Constructor<?> objectCtor = dexFinder.sendTextMsgCtorObject;
         if (objectCtor != null) {
-            return KavaReflector.newInstance(objectCtor, talker, content, messageType, sendFlag, sourceArgs);
+            Object request = instantiateTextRequest(objectCtor, talker, content, messageType, sendFlag, sourceArgs);
+            if (request != null) return request;
         }
 
         return RedPacketReflector.newInstanceByArgs(
@@ -799,6 +802,28 @@ public final class WeChatMessageApi {
                         sourceArgs != null ? sourceArgs : 0L
                 }
         );
+    }
+
+    /**
+     * 8.0.80 起 NetSceneSendMsg 构造器尾部多了一个 String（msgSource），
+     * 按实际参数个数构造，多出来的补 null 走微信默认分支。
+     */
+    private Object instantiateTextRequest(Constructor<?> ctor,
+                                          String talker,
+                                          String content,
+                                          int messageType,
+                                          int sendFlag,
+                                          Object fifthArg) {
+        if (ctor == null) return null;
+        Class<?>[] types = ctor.getParameterTypes();
+        Object[] args = new Object[types.length];
+        if (args.length > 0) args[0] = talker;
+        if (args.length > 1) args[1] = content;
+        if (args.length > 2) args[2] = messageType;
+        if (args.length > 3) args[3] = sendFlag;
+        if (args.length > 4) args[4] = fifthArg;
+        for (int i = 5; i < args.length; i++) args[i] = null;
+        return KavaReflector.newInstance(ctor, args);
     }
 
     private Object getPatExtensionInstance() {
