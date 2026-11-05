@@ -526,12 +526,6 @@ class ScriptWaBridge @JvmOverloads internal constructor(
         return sender.revoke(msgId)
     }
 
-    fun uploadDeviceStep(step: Long): Boolean {
-        if (step <= 0L) return false
-        val sender = WeChatApis.message().sender() ?: return false
-        return sender.uploadDeviceStep(step)
-    }
-
     fun getSnsPostList(): List<WeChatSnsPost> = getSnsPostList(50)
 
     fun getSnsPostList(limit: Int): List<WeChatSnsPost> {

@@ -1884,7 +1884,6 @@ object ScriptPluginRuntime {
                 void sendQuoteMsg(String talker, long msgId, String content) { wa.sendQuoteMsg(talker, msgId, content); }
                 void sendQuoteMsg(String talker, String content, long msgId) { wa.sendQuoteMsg(talker, content, msgId); }
                 void revokeMsg(long msgId) { wa.revokeMsg(msgId); }
-                void uploadDeviceStep(long step) { wa.uploadDeviceStep(step); }
                 Object getSnsPostList() { return wa.getSnsPostList(); }
                 Object getSnsPostList(int limit) { return wa.getSnsPostList(limit); }
                 Object getSnsPostList(String userName, int limit) { return wa.getSnsPostList(userName, limit); }

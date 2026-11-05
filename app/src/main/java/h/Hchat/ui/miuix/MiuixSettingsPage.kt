@@ -259,8 +259,8 @@ import h.Hchat.hooks.items.emojisave.EmojiSaveFeature
 import h.Hchat.hooks.items.emojisave.EmojiSaveSettings
 import h.Hchat.hooks.items.fakelocation.FakeLocationFeature
 import h.Hchat.hooks.items.fakelocation.FakeLocationSettings
-import h.Hchat.hooks.items.sportstep.SportStepFeature
-import h.Hchat.hooks.items.sportstep.SportStepSettings
+import h.Hchat.hooks.items.wechatstep.WechatStepFeature
+import h.Hchat.hooks.items.wechatstep.WechatStepSettings
 import h.Hchat.hooks.items.fakescancamera.FakeScanCameraFeature
 import h.Hchat.hooks.items.fakescancamera.FakeScanCameraSettings
 import h.Hchat.hooks.items.fakevoiceduration.FakeVoiceDurationFeature
@@ -3695,7 +3695,7 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         SkipMiniProgramVideoAdsFeature.ID -> listOf("跳过小程序视频广告", "小程序广告", "视频广告")
         SkipGlobalMiniProgramSplashAdsFeature.ID -> listOf("跳过全局小程序开屏广告", "小程序开屏广告", "启动广告", "全局广告")
         FakeLocationFeature.ID -> listOf("虚拟定位", "模拟定位", "小程序定位", "微信地图", "地图选点", "搜索地点", "经纬度", "GPS")
-        SportStepFeature.ID -> listOf("步数", "微信运动", "刷步", "计步", "运动步数")
+        WechatStepFeature.ID -> listOf("步数", "微信运动", "刷步", "计步", "运动步数")
         GameEmojiFeature.ID -> listOf("指定骰子猜拳", "自定义骰子", "骰子点数", "猜拳结果", "剪刀", "石头", "布", "发送时选择")
         VoiceForwardFeature.ID -> listOf("语音转发", "语音保存", "合并语音", "合并MP3", "转发弹窗", "好友列表", "群聊列表", "语音列表", "批量转发")
         ScheduledTaskFeature.ID -> listOf("定时任务", "定时发送", "群发任务", "计划发送", "循环发送", "每日发送", "每周发送", "朋友圈", "图文", "视文")
@@ -4314,7 +4314,7 @@ private fun FeatureSettingsPage(
         SkipMiniProgramVideoAdsFeature.ID -> SkipMiniProgramVideoAdsMiuixPage(context, provider, onBack)
         SkipGlobalMiniProgramSplashAdsFeature.ID -> SkipGlobalMiniProgramSplashAdsMiuixPage(context, provider, onBack)
         FakeLocationFeature.ID -> FakeLocationMiuixPage(context, provider, onBack)
-        SportStepFeature.ID -> SportStepMiuixPage(context, provider, onBack)
+        WechatStepFeature.ID -> WechatStepMiuixPage(context, provider, onBack)
         GameEmojiFeature.ID -> GameEmojiMiuixPage(context, provider, onBack)
         MessageBubbleFeature.ID -> MessageBubbleMiuixPage(context, provider, onBack)
         ChatTimeStyleFeature.ID -> ChatTimeStyleMiuixPage(context, provider, onBack)
@@ -11082,6 +11082,198 @@ private fun SkipGlobalMiniProgramSplashAdsMiuixPage(
 }
 
 @Composable
+private fun WechatStepMiuixPage(
+    context: Context,
+    provider: FeatureSettingsProvider,
+    onBack: () -> Unit
+) {
+    val sp = remember { HchatStorage.preferences(context, WechatStepSettings.PREFS_NAME) }
+    var enabled by remember {
+        mutableStateOf(sp.getBoolean(WechatStepSettings.KEY_ENABLE, WechatStepSettings.DEFAULT_ENABLE))
+    }
+    var autoIncrease by remember {
+        mutableStateOf(sp.getBoolean(WechatStepSettings.KEY_AUTO, WechatStepSettings.DEFAULT_AUTO))
+    }
+    var multiplier by remember {
+        mutableStateOf(
+            sp.getInt(WechatStepSettings.KEY_MULTIPLIER, WechatStepSettings.DEFAULT_MULTIPLIER)
+                .coerceIn(WechatStepSettings.MIN_MULTIPLIER, WechatStepSettings.MAX_MULTIPLIER)
+        )
+    }
+    var maximum by remember {
+        mutableStateOf(
+            sp.getInt(WechatStepSettings.KEY_MAXIMUM, WechatStepSettings.DEFAULT_MAXIMUM)
+                .coerceIn(WechatStepSettings.MIN_MAXIMUM, WechatStepSettings.MAX_MAXIMUM)
+        )
+    }
+    var endHour by remember {
+        mutableStateOf(
+            sp.getInt(WechatStepSettings.KEY_END_HOUR, WechatStepSettings.DEFAULT_END_HOUR)
+                .coerceIn(WechatStepSettings.MIN_END_HOUR, WechatStepSettings.MAX_END_HOUR)
+        )
+    }
+    var editing by remember { mutableStateOf("") }
+    var input by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    val scrollBehavior = MiuixScrollBehavior()
+
+    PageScaffold(
+        title = provider.title(),
+        largeTitle = provider.title(),
+        scrollBehavior = scrollBehavior,
+        bottomBar = { BottomActionBar("返回", onBack) }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
+            state = listState,
+            contentPadding = PaddingValues(
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 84.dp
+            )
+        ) {
+            item { SmallTitle(text = "开关") }
+            item {
+                SettingsCard {
+                    SwitchRow(
+                        checked = enabled,
+                        title = "启用微信步数修改",
+                        summary = "默认关闭；开启后微信读到的步数由本模块接管",
+                        onCheckedChange = {
+                            enabled = it
+                            sp.edit().putBoolean(WechatStepSettings.KEY_ENABLE, it).apply()
+                        }
+                    )
+                    InsetDivider()
+                    SwitchRow(
+                        checked = autoIncrease,
+                        title = "自动增加步数",
+                        summary = if (autoIncrease) {
+                            "每个传感器事件 +$multiplier 步"
+                        } else {
+                            "关闭后按真实步数 × $multiplier 放大"
+                        },
+                        onCheckedChange = {
+                            autoIncrease = it
+                            sp.edit().putBoolean(WechatStepSettings.KEY_AUTO, it).apply()
+                        }
+                    )
+                }
+            }
+            item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "参数") }
+            item {
+                SettingsCard {
+                    ActionRow("步数倍率", "$multiplier（1-10000，自动模式或真实步数模式使用）") {
+                        editing = "multiplier"
+                        input = multiplier.toString()
+                    }
+                    InsetDivider()
+                    ActionRow("每日步数上限", "$maximum（1-1000000）") {
+                        editing = "maximum"
+                        input = maximum.toString()
+                    }
+                    InsetDivider()
+                    ActionRow("截止时间", "$endHour 点（0-24，达到后停止增加）") {
+                        editing = "endHour"
+                        input = endHour.toString()
+                    }
+                }
+            }
+            item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "说明") }
+            item {
+                SettingsCard {
+                    InfoRow("生效范围", "微信进程内的计步传感器（18/19）")
+                    InsetDivider()
+                    InfoRow("跨天处理", "每天 0 点按当天首次读数重新计数")
+                }
+            }
+        }
+    }
+
+    if (editing.isNotEmpty()) {
+        val dialogTitle: String
+        val dialogHint: String
+        when (editing) {
+            "multiplier" -> {
+                dialogTitle = "步数倍率"
+                dialogHint = "范围 1-10000"
+            }
+            "maximum" -> {
+                dialogTitle = "每日步数上限"
+                dialogHint = "范围 1-1000000"
+            }
+            else -> {
+                dialogTitle = "截止时间"
+                dialogHint = "范围 0-24"
+            }
+        }
+        val parsed = input.toIntOrNull()
+        WindowDialog(
+            show = true,
+            title = dialogTitle,
+            onDismissRequest = { editing = "" },
+            content = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    InputRow(dialogTitle, dialogHint, input) { value ->
+                        input = value.filter { ch -> ch.isDigit() }.take(7)
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TextButton(
+                            text = "取消",
+                            onClick = { editing = "" },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.textButtonColorsPrimary()
+                        )
+                        TextButton(
+                            text = "保存",
+                            onClick = {
+                                val value = parsed
+                                if (value != null) {
+                                    when (editing) {
+                                        "multiplier" -> {
+                                            multiplier = value.coerceIn(
+                                                WechatStepSettings.MIN_MULTIPLIER,
+                                                WechatStepSettings.MAX_MULTIPLIER
+                                            )
+                                            sp.edit()
+                                                .putInt(WechatStepSettings.KEY_MULTIPLIER, multiplier)
+                                                .apply()
+                                        }
+                                        "maximum" -> {
+                                            maximum = value.coerceIn(
+                                                WechatStepSettings.MIN_MAXIMUM,
+                                                WechatStepSettings.MAX_MAXIMUM
+                                            )
+                                            sp.edit()
+                                                .putInt(WechatStepSettings.KEY_MAXIMUM, maximum)
+                                                .apply()
+                                        }
+                                        else -> {
+                                            endHour = value.coerceIn(
+                                                WechatStepSettings.MIN_END_HOUR,
+                                                WechatStepSettings.MAX_END_HOUR
+                                            )
+                                            sp.edit()
+                                                .putInt(WechatStepSettings.KEY_END_HOUR, endHour)
+                                                .apply()
+                                        }
+                                    }
+                                }
+                                editing = ""
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.textButtonColorsPrimary()
+                        )
+                    }
+                }
+            }
+        )
+    }
+}
+
+@Composable
 private fun FakeLocationMiuixPage(
     context: Context,
     provider: FeatureSettingsProvider,
@@ -11388,126 +11580,6 @@ private fun copyFakeLocationCoordinate(context: Context, label: String, text: St
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
     clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
     Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
-}
-
-@Composable
-private fun SportStepMiuixPage(
-    context: Context,
-    provider: FeatureSettingsProvider,
-    onBack: () -> Unit
-) {
-    val sp = remember { HchatStorage.preferences(context, SportStepSettings.PREFS_NAME) }
-    var enabled by remember {
-        mutableStateOf(sp.getBoolean(SportStepSettings.KEY_ENABLE, SportStepSettings.DEFAULT_ENABLE))
-    }
-    var mode by remember {
-        mutableStateOf(sp.getInt(SportStepSettings.KEY_MODE, SportStepSettings.DEFAULT_MODE))
-    }
-    var value by remember {
-        mutableStateOf(sp.getString(SportStepSettings.KEY_VALUE, SportStepSettings.DEFAULT_VALUE).orEmpty())
-    }
-    var showInput by remember { mutableStateOf(false) }
-    val listState = rememberLazyListState()
-    val scrollBehavior = MiuixScrollBehavior()
-    PageScaffold(
-        title = provider.title(),
-        largeTitle = provider.title(),
-        scrollBehavior = scrollBehavior,
-        bottomBar = { BottomActionBar("返回", onBack) }
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
-            state = listState,
-            contentPadding = PaddingValues(
-                top = padding.calculateTopPadding() + 8.dp,
-                bottom = padding.calculateBottomPadding() + 84.dp
-            )
-        ) {
-            item { SmallTitle(text = "步数") }
-            item {
-                SettingsCard {
-                    SwitchRow(
-                        checked = enabled,
-                        title = "启用微信步数修改",
-                        summary = "改写微信从计步传感器读到的累计步数",
-                        onCheckedChange = {
-                            enabled = it
-                            sp.edit().putBoolean(SportStepSettings.KEY_ENABLE, it).apply()
-                            SportStepSettings.publish(context)
-                        }
-                    )
-                    InsetDivider()
-                    ActionRow(
-                        title = "修改方式",
-                        summary = if (mode == SportStepSettings.MODE_MULTIPLY) "真实步数 × 倍数（与插件一致的倍率）" else "每走 1 步额外增加设定步数"
-                    ) {
-                        mode = if (mode == SportStepSettings.MODE_MULTIPLY) {
-                            SportStepSettings.MODE_AUTO
-                        } else {
-                            SportStepSettings.MODE_MULTIPLY
-                        }
-                        sp.edit().putInt(SportStepSettings.KEY_MODE, mode).apply()
-                        SportStepSettings.publish(context)
-                    }
-                    InsetDivider()
-                    ActionRow(
-                        title = if (mode == SportStepSettings.MODE_MULTIPLY) "放大倍数" else "每步额外增加",
-                        summary = if (mode == SportStepSettings.MODE_MULTIPLY) "${value} 倍" else "每步 +${value} 步"
-                    ) { showInput = true }
-                }
-            }
-            item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "说明") }
-            item {
-                SettingsCard {
-                    InfoRow("生效范围", "微信运动读取计步传感器时，逐步生效")
-                    InsetDivider()
-                    InfoRow("计算方式", "按真实步数增量放大，不做一次性跳变（跳变会被微信当异常丢弃）")
-                    InsetDivider()
-                    InfoRow("建议", "倍数 10 表示每走 1 步算 10 步；当天数值会随走动持续增长")
-                }
-            }
-        }
-    }
-    if (showInput) {
-        WindowDialog(
-            show = true,
-            title = if (mode == SportStepSettings.MODE_MULTIPLY) "放大倍数" else "每步额外增加",
-            onDismissRequest = { showInput = false },
-            content = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    InputRow(
-                        if (mode == SportStepSettings.MODE_MULTIPLY) "倍数" else "每步增加",
-                        if (mode == SportStepSettings.MODE_MULTIPLY) "例如 10 表示十倍" else "例如 50 表示每步 +50",
-                        value
-                    ) { input -> value = input.filter { it.isDigit() || it == '.' } }
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        TextButton(
-                            text = "取消",
-                            onClick = { showInput = false },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.textButtonColorsPrimary()
-                        )
-                        TextButton(
-                            text = "保存",
-                            onClick = {
-                                val parsed = value.toDoubleOrNull()
-                                if (parsed != null && parsed > 0.0) {
-                                    sp.edit().putString(SportStepSettings.KEY_VALUE, value).apply()
-                                    SportStepSettings.publish(context)
-                                }
-                                showInput = false
-                            },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.textButtonColorsPrimary()
-                        )
-                    }
-                }
-            }
-        )
-    }
 }
 
 @Composable

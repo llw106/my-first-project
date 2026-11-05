@@ -16,7 +16,7 @@ import h.Hchat.hooks.items.customnotify.CustomNotificationFeature
 import h.Hchat.hooks.items.editmsg.EditMessageFeature
 import h.Hchat.hooks.items.emojisave.EmojiSaveFeature
 import h.Hchat.hooks.items.fakelocation.FakeLocationFeature
-import h.Hchat.hooks.items.sportstep.SportStepFeature
+import h.Hchat.hooks.items.wechatstep.WechatStepFeature
 import h.Hchat.hooks.items.fakescancamera.FakeScanCameraFeature
 import h.Hchat.hooks.items.fakevoiceduration.FakeVoiceDurationFeature
 import h.Hchat.hooks.items.floatingshortcut.FloatingShortcutFeature
@@ -128,7 +128,7 @@ object FeatureRegistry {
             .register(HideChatAvatarFeature())
             .register(MessageBlockFeature())
             .register(FakeLocationFeature())
-            .register(SportStepFeature())
+            .register(WechatStepFeature())
             .register(GameEmojiFeature())
             .register(FakeMiniProgramBaseLibFeature())
             .register(SkipMiniProgramVideoAdsFeature())

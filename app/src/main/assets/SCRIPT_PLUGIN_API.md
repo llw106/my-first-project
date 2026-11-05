@@ -1084,7 +1084,6 @@ modifyContactLabelList("wxid_xxx", names);
 | `sendQuoteMsg(String talker, long msgId, String content)` | 发送引用消息，WA 当前文档顺序。`msgId` 可传本地 `msgId`，也兼容传 `msgSvrId`。 |
 | `sendQuoteMsg(String talker, String content, long msgId)` | 兼容部分旧 WA 插件常见写法，效果同上。 |
 | `revokeMsg(long msgId)` | WA 同款：撤回指定消息。优先按本地 `msgId` 撤回，也兼容直接传 `msgSvrId` 反查；只能撤回自己发送、微信仍允许撤回的消息。 |
-| `uploadDeviceStep(long step)` | WA 同款：上传微信运动设备步数。 |
 | `sendPat(String talker, String pattedUser)` | 发送拍一拍，会按微信原生规则校验当前会话和被拍用户，并走原生点击同款 `scene=0`。 |
 | `sendShareCard(String talker, String wxid)` | 发送联系人名片。 |
 | `boolean sendImage(String talker, String sendPath)` | 发送图片，返回是否成功提交。 |
@@ -1121,7 +1120,6 @@ modifyContactLabelList("wxid_xxx", names);
 | `content` | 文本内容或 XML 内容。 |
 | `msgId` | 被引用消息的本地 `msgId`；如果只能拿到 `msgSvrId`，也可以直接传 `msgSvrId`。 |
 | `msgId` 用于 `revokeMsg` | 优先传要撤回消息的本地 `msgId`，通常从 `msgInfoBean.getMsgId()` 或历史消息对象读取；如果手里只有 `msgSvrId`，现在也会尝试反查后撤回。 |
-| `step` | 要上传的步数，必须大于 `0`。 |
 | `pattedUser` | 被拍一拍的用户 wxid。私聊通常和 `talker` 相同；群聊传群成员 wxid。 |
 | `wxid` | 要分享的联系人 wxid 或 OpenIM 用户 ID。 |
 | `sendPath` | 本地文件路径，例如 `/sdcard/a.jpg`。 |

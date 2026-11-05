@@ -231,8 +231,6 @@ public class DexFinder {
     public Constructor<?> delChatroomMemberCtor;
     public Class<?> revokeMsgClass;
     public Constructor<?> revokeMsgCtor;
-    public Class<?> uploadDeviceStepClass;
-    public Constructor<?> uploadDeviceStepCtor;
     public Class<?> addContactLabelClass;
     public Constructor<?> addContactLabelCtorString;
     public Constructor<?> addContactLabelCtorList;
@@ -326,7 +324,6 @@ public class DexFinder {
         resolveInviteChatroomMemberApi();
         resolveDelChatroomMemberApi();
         resolveRevokeMsgApi();
-        resolveUploadDeviceStepApi();
         resolveContactLabelNetworkApi();
         resolveSnsUploadApi();
         resolveChatPageApi();
@@ -3221,38 +3218,6 @@ public class DexFinder {
         }
     }
 
-    public void resolveUploadDeviceStepApi() {
-        if (ensureSnapshotLoaded()) return;
-        try {
-            if (uploadDeviceStepCtor == null) {
-                uploadDeviceStepCtor = findUploadDeviceStepCtor(uploadDeviceStepClass);
-            }
-            if (uploadDeviceStepCtor != null) return;
-            List<Class<?>> candidates = new ArrayList<>();
-            collectSendTextClassCandidates(candidates, 20,
-                    new String[][]{
-                            {"/cgi-bin/mmoc-bin/hardware/uploaddevicestep", "MicroMsg.Sport.NetSceneUploadDeviceStep"},
-                            {"NetSceneUploadDeviceStep"}
-                    });
-            collectSendTextMethodOwnerCandidates(candidates, 20,
-                    new String[][]{
-                            {"/cgi-bin/mmoc-bin/hardware/uploaddevicestep", "MicroMsg.Sport.NetSceneUploadDeviceStep"},
-                            {"NetSceneUploadDeviceStep"}
-                    });
-            for (Class<?> candidate : candidates) {
-                Constructor<?> ctor = findUploadDeviceStepCtor(candidate);
-                if (ctor == null) continue;
-                uploadDeviceStepClass = candidate;
-                uploadDeviceStepCtor = ctor;
-                break;
-            }
-            logDetail("上传步数API: "
-                    + (uploadDeviceStepClass != null ? uploadDeviceStepClass.getName() : "null"));
-        } catch (Throwable e) {
-            h.Hchat.utils.HLog.e(TAG + " resolveUploadDeviceStepApi 失败: " + e.getMessage(), e);
-        }
-    }
-
     public void resolveContactLabelNetworkApi() {
         if (ensureSnapshotLoaded()) return;
         try {
@@ -3722,8 +3687,6 @@ public class DexFinder {
             delChatroomMemberCtor = findDelChatroomMemberCtor(delChatroomMemberClass);
             revokeMsgClass = loadClass("revokeMsgClass");
             revokeMsgCtor = findRevokeMsgCtor(revokeMsgClass);
-            uploadDeviceStepClass = loadClass("uploadDeviceStepClass");
-            uploadDeviceStepCtor = findUploadDeviceStepCtor(uploadDeviceStepClass);
             addContactLabelClass = loadClass("addContactLabelClass");
             addContactLabelCtorString = findCtorByExactTypes(addContactLabelClass, String.class);
             addContactLabelCtorList = findCtorByExactTypes(addContactLabelClass, List.class);
@@ -4751,10 +4714,6 @@ public class DexFinder {
         return revokeMsgCtor != null || findRevokeMsgCtor(revokeMsgClass) != null;
     }
 
-    public boolean hasUploadDeviceStepApi() {
-        return uploadDeviceStepCtor != null || findUploadDeviceStepCtor(uploadDeviceStepClass) != null;
-    }
-
     public boolean hasContactLabelNetworkApi() {
         return (addContactLabelCtorString != null || addContactLabelCtorList != null)
                 && (modifyContactLabelListCtor != null
@@ -4924,7 +4883,6 @@ public class DexFinder {
             putClass(editor, "inviteChatroomMemberClass", inviteChatroomMemberClass);
             putClass(editor, "delChatroomMemberClass", delChatroomMemberClass);
             putClass(editor, "revokeMsgClass", revokeMsgClass);
-            putClass(editor, "uploadDeviceStepClass", uploadDeviceStepClass);
             putClass(editor, "addContactLabelClass", addContactLabelClass);
             putClass(editor, "modifyContactLabelListClass", modifyContactLabelListClass);
             putClass(editor, "snsUploadPackHelperClass", snsUploadPackHelperClass);
@@ -5216,19 +5174,6 @@ public class DexFinder {
                 continue;
             }
             if (params[1] != String.class || params[2] != String.class) continue;
-            return KavaReflector.accessible(ctor);
-        }
-        return null;
-    }
-
-    private Constructor<?> findUploadDeviceStepCtor(Class<?> cl) {
-        if (cl == null) return null;
-        for (Constructor<?> ctor : KavaReflector.declaredConstructors(cl)) {
-            Class<?>[] params = ctor.getParameterTypes();
-            if (params.length != 7) continue;
-            if (params[0] != String.class || params[1] != String.class) continue;
-            if (params[2] != int.class || params[3] != int.class || params[4] != int.class) continue;
-            if (params[5] != String.class || params[6] != int.class) continue;
             return KavaReflector.accessible(ctor);
         }
         return null;

@@ -238,7 +238,6 @@ void sendText(String talker, String content, Consumer callback);
 void sendQuoteMsg(String talker, long msgId, String content);
 void sendQuoteMsg(String talker, String content, long msgId);
 void revokeMsg(long msgId);
-void uploadDeviceStep(long step);
 void sendPat(String talker, String pattedUser);
 void sendShareCard(String talker, String wxid);
 boolean sendImage(String talker, String sendPath);

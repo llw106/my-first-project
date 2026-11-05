@@ -461,36 +461,6 @@ public final class WeChatMessageApi {
         }
     }
 
-    public boolean uploadDeviceStep(long step) {
-        if (step <= 0L) {
-            log("上传步数失败: step无效");
-            return false;
-        }
-        if (dexFinder == null || dexFinder.uploadDeviceStepCtor == null || networkDispatcher == null) {
-            log("上传步数失败: API未就绪");
-            return false;
-        }
-        installNetworkHook();
-        try {
-            int safeStep = (int) Math.min(step, Integer.MAX_VALUE);
-            Object scene = KavaReflector.newInstance(
-                    dexFinder.uploadDeviceStepCtor,
-                    "",
-                    "gh_43f2581f6fd6",
-                    todayStartSeconds(),
-                    nowSeconds(),
-                    safeStep,
-                    buildDeviceInfoXml(),
-                    1);
-            boolean result = networkDispatcher.send(scene);
-            log("上传步数" + (result ? "已发送" : "发送失败") + ": step=" + safeStep);
-            return result;
-        } catch (Throwable e) {
-            log("上传步数异常: " + e.getMessage());
-            return false;
-        }
-    }
-
     public boolean sendPat(String talker, String pattedUser) {
         if (TextUtils.isEmpty(talker) || TextUtils.isEmpty(pattedUser)) {
             log("发送拍一拍失败: talker/pattedUser 为空");
