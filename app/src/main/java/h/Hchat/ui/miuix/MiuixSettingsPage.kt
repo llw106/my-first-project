@@ -921,8 +921,6 @@ object MiuixSettingsPage {
         }
     }
 
-    private fun navSettleInterpolator(): Interpolator = NAV_SETTLE_INTERPOLATOR
-
     private class SettingsPageHostTag(val floatingAgent: Boolean) {
         var close: (() -> Unit)? = null
         var collapseAgent: (() -> Unit)? = null
@@ -1039,7 +1037,7 @@ object MiuixSettingsPage {
                     .translationX(page.width * 0.25f)
                     .alpha(0.9f)
                     .setDuration(NAV_SETTLE_DURATION_MS)
-                    .setInterpolator(navSettleInterpolator())
+                    .setInterpolator(NAV_SETTLE_INTERPOLATOR)
                     .withEndAction { finishClose() }
                     .start()
             } else {
@@ -1302,7 +1300,7 @@ object MiuixSettingsPage {
             .translationX(0f)
             .alpha(1f)
             .setDuration(NAV_SETTLE_DURATION_MS)
-            .setInterpolator(navSettleInterpolator())
+            .setInterpolator(NAV_SETTLE_INTERPOLATOR)
             .start()
     }
 
