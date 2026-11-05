@@ -4,8 +4,6 @@ import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Xml
-import h.Hchat.dexkit.DexMethodCache
-import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.utils.HchatMediaDownloader
 import h.Hchat.utils.HLog
 import h.Hchat.utils.KavaReflector
@@ -55,9 +53,6 @@ internal object FinderMediaDownloadSupport {
         "sourcecommentscene" to "sourceCommentScene"
     )
 
-    @Volatile
-    private var detailResolver: FinderFeedDetailResolver? = null
-
     data class FinderMedia(
         val type: Int,
         val items: List<JSONObject>,
@@ -65,15 +60,6 @@ internal object FinderMediaDownloadSupport {
         val objectNonceId: String = "",
         val sourceCommentScene: Int = DEFAULT_COMMENT_SCENE
     )
-
-    @Synchronized
-    fun install(context: FeatureContext): Boolean {
-        val runtimeKey = DexMethodCache.runtimeKey(context.hostContext(), context.hostClassLoader())
-        detailResolver?.takeIf { it.runtimeKey == runtimeKey }?.let { return true }
-        val resolver = FinderFeedDetailResolver.locate(context) ?: return false
-        detailResolver = resolver
-        return true
-    }
 
     fun extractMedia(source: Any?): FinderMedia? = extractMedia(source, 0)
 
@@ -238,11 +224,9 @@ internal object FinderMediaDownloadSupport {
         savePath: String?
     ): File? {
         if (mediaIndex !in media.items.indices) return null
-        val prepared = prepareForDownload(media, mediaIndex)
-        if (mediaIndex !in prepared.items.indices) return null
-        return when (prepared.type) {
-            MEDIA_TYPE_IMAGE -> downloadImage(context, prepared.items[mediaIndex], mediaIndex, savePath)
-            MEDIA_TYPE_VIDEO -> downloadVideo(context, prepared.items[mediaIndex], mediaIndex, savePath)
+        return when (media.type) {
+            MEDIA_TYPE_IMAGE -> downloadImage(context, media.items[mediaIndex], mediaIndex, savePath)
+            MEDIA_TYPE_VIDEO -> downloadVideo(context, media.items[mediaIndex], mediaIndex, savePath)
             else -> null
         }
     }
@@ -302,27 +286,6 @@ internal object FinderMediaDownloadSupport {
             ?: KavaReflector.readField(finderObject, "objectNonceId")) as? String
         return FinderMedia(mediaType, items, objectId, objectNonceId.orEmpty())
             .takeIf { it.items.isNotEmpty() }
-    }
-
-    private fun prepareForDownload(media: FinderMedia, mediaIndex: Int): FinderMedia {
-        if (media.type != MEDIA_TYPE_VIDEO || hasUsableVideoSource(media.items[mediaIndex])) return media
-        if (media.objectId.isBlank() || media.objectNonceId.isBlank()) return media
-        val finderObject = detailResolver?.resolve(
-            media.objectId,
-            media.objectNonceId,
-            media.sourceCommentScene
-        ) ?: run {
-            HLog.e("[Hchat:FinderDownload] 未能补齐视频号详情: objectId=${media.objectId}")
-            return media
-        }
-        return extractFinderObject(finderObject) ?: run {
-            HLog.e("[Hchat:FinderDownload] 视频号详情缺少可下载媒体: objectId=${media.objectId}")
-            media
-        }
-    }
-
-    private fun hasUsableVideoSource(json: JSONObject): Boolean {
-        return jsonString(json, "decodeKey", "decode_key").isNotBlank() || pcdnUrl(json).isNotBlank()
     }
 
     private fun findBaseFinderFeedObject(source: Any): Any? {

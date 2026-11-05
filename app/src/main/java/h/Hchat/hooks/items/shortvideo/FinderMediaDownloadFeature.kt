@@ -54,13 +54,6 @@ class FinderMediaDownloadFeature : BaseFeature() {
     }
 
     private fun scheduleInstall(context: FeatureContext) {
-        DexInstallScheduler.schedule(
-            "shared:finder_feed_detail",
-            "视频号详情解析",
-            stage = DexInstallScheduler.Stage.WARMUP
-        ) {
-            FinderMediaDownloadSupport.install(context)
-        }
         DexInstallScheduler.schedule(ID, name()) {
             hooker?.install() == true
         }

@@ -6,7 +6,6 @@ import h.Hchat.hooks.core.BaseFeature
 import h.Hchat.hooks.core.DexInstallScheduler
 import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.hooks.items.quickread.QuickMarkReadRuntime
-import h.Hchat.hooks.items.shortvideo.FinderMediaDownloadSupport
 
 class ScriptPluginFeature : BaseFeature() {
     override fun featureId(): String = ID
@@ -28,13 +27,6 @@ class ScriptPluginFeature : BaseFeature() {
     }
 
     private fun scheduleDexHooks(context: FeatureContext) {
-        DexInstallScheduler.schedule(
-            "shared:finder_feed_detail",
-            "视频号详情解析",
-            stage = DexInstallScheduler.Stage.WARMUP
-        ) {
-            FinderMediaDownloadSupport.install(context)
-        }
         DexInstallScheduler.schedule("$ID:menus", "${name()}-菜单", stage = DexInstallScheduler.Stage.WARMUP) {
             val finder = SettingsDexFinder(
                 context.dexKitBridge(),

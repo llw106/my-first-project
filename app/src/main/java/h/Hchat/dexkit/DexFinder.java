@@ -1779,7 +1779,7 @@ public class DexFinder {
         try {
             if (emojiSendMethod == null) {
                 List<MethodData> methods = dexKit.findMethod(
-                        mkMethodUsingStrings("NetSceneUploadEmoji: msgId"));
+                        mkMethodUsingStrings("NetSceneUploadEmoji: msgId = %s, md5 %s, len %s"));
                 for (MethodData methodData : methods) {
                     try {
                         Method method = methodData.getMethodInstance(classLoader);
@@ -1793,7 +1793,7 @@ public class DexFinder {
 
             if (emojiManagerSendMethod == null) {
                 List<MethodData> methods = dexKit.findMethod(
-                        mkMethodUsingStrings("sendEmoji: context is null", "sendEmoji: emoji not found"));
+                        mkMethodUsingStrings("sendEmoji: context is null"));
                 for (MethodData methodData : methods) {
                     try {
                         Method method = methodData.getMethodInstance(classLoader);
@@ -2743,11 +2743,11 @@ public class DexFinder {
             }
             if (!isContactMuteMethod(contactMuteEnableMethod)) {
                 contactMuteEnableMethod = findUniqueMethodUsingString(
-                        "setMute contact invalid username");
+                        "setMute contact invalid username: %s, contactId: %s");
             }
             if (!isContactMuteMethod(contactMuteDisableMethod)) {
                 contactMuteDisableMethod = findUniqueMethodUsingString(
-                        "unSetMute contact invalid username");
+                        "unSetMute contact invalid username: %s, contactId: %s");
             }
             if (!isContactMuteStateMethod(contactMuteStateMethod, contactMuteEnableMethod)) {
                 contactMuteStateMethod = findContactMuteStateMethod();
@@ -2838,7 +2838,7 @@ public class DexFinder {
         Class<?> contactType = mute.getParameterTypes()[0];
         List<Method> invokes = new ArrayList<>();
         for (MethodData data : dexKit.findMethod(
-                mkMethodUsingStrings("setMute contact invalid username"))) {
+                mkMethodUsingStrings("setMute contact invalid username: %s, contactId: %s"))) {
             try {
                 Method candidate = data.getMethodInstance(classLoader);
                 if (!mute.equals(candidate)) continue;
