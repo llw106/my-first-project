@@ -216,18 +216,6 @@ import h.Hchat.hooks.items.audiotransform.AudioTransformSegmenter
 import h.Hchat.hooks.items.audiotransform.AudioTransformSettings
 import h.Hchat.hooks.items.antirecall.AntiRecallFeature
 import h.Hchat.hooks.items.antirecall.AntiRecallSettings
-import h.Hchat.hooks.items.autoreply.AutoReplyFeature
-import h.Hchat.hooks.items.autoreply.AutoReplyRule
-import h.Hchat.hooks.items.autoreply.AutoReplyRuntime
-import h.Hchat.hooks.items.autoreply.AutoReplySettings
-import h.Hchat.hooks.items.autoreply.AutoReplyStep
-import h.Hchat.hooks.items.autoreply.XiaozhiMcpStatus
-import h.Hchat.hooks.items.autoreply.AutoReplyXiaozhiConfig
-import h.Hchat.hooks.items.autoreply.AutoReplyZhiliaConfig
-import h.Hchat.hooks.items.autoreply.XiaozhiAgentOption
-import h.Hchat.hooks.items.autoreply.XiaozhiConsoleApi
-import h.Hchat.hooks.items.autoreply.XiaozhiModelOption
-import h.Hchat.hooks.items.autoreply.XiaozhiVoiceOption
 import h.Hchat.hooks.items.autooriginal.AutoOriginalImageFeature
 import h.Hchat.hooks.items.autooriginal.AutoOriginalImageSettings
 import h.Hchat.hooks.items.autovieworiginal.AutoViewOriginalFeature
@@ -2523,7 +2511,6 @@ private object HchatConfigBackup {
         QuickMarkReadSettings.PREFS_NAME,
         CustomNotificationSettings.PREFS_NAME,
         ConversationGroupStore.PREFS_NAME,
-        AutoReplySettings.PREFS_NAME,
         InputHintSettings.PREFS_NAME,
         AutoOriginalImageSettings.PREFS_NAME,
         AutoViewOriginalSettings.PREFS_NAME,
@@ -2961,7 +2948,6 @@ private fun practicalFeatureGroups(
             providers = practicalProviders.filterByIds(
                 AntiRecallFeature.ID,
                 MultiRecallFeature.ID,
-                AutoReplyFeature.ID,
                 TypingReportBlockFeature.ID,
                 PatBlockFeature.ID,
                 AutoOriginalImageFeature.ID,
@@ -3645,12 +3631,6 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         MultiRecallFeature.ID -> listOf("多选撤回", "批量撤回", "多选消息", "分享菜单", "撤回自己消息")
         MessageForwardFeature.ID -> listOf("转发", "转发[H]", "朋友圈", "好友", "分享", "群发助手", "好友标签", "朋友圈转发", "个人主页朋友圈")
         SelectedMessagesFeature.ID -> listOf("群发助手", "群发助手[H]", "定时转发[H]", "多选消息", "定时转发", "模块群发", "微信原生群发助手", "群发助手间隔延迟", "群发间隔延迟")
-        AutoReplyFeature.ID -> listOf(
-            "自动回复规则", "任意消息", "关键词", "正则", "艾特我", "@我", "艾特全体", "@所有人", "回复步骤", "延迟回复",
-            "回复冷却时间", "冷却秒数", "最大回复次数",
-            "小智", "小智AI", "小智回复", "小智语音", "小智语音回复", "小智文字回复", "唤醒词", "语音输入", "TTS",
-            "上下文", "固定ID", "清空上下文", "智谱", "模型", "Agent", "角色", "语音角色", "好友自动化", "新好友打招呼"
-        )
         ConversationGroupFeature.ID -> listOf(
             "会话分组", "聊天分组", "嵌套分组", "归拢会话", "隐藏会话", "移动会话", "分组管理"
         )
@@ -3987,29 +3967,6 @@ private enum class CustomNotificationDefaultKind {
     OFFICIAL
 }
 
-
-private sealed class AutoReplyEditorRoute {
-    object Main : AutoReplyEditorRoute()
-    data class OptionPicker(val request: OptionPickerRequest) : AutoReplyEditorRoute()
-    data class ContactPicker(val request: ContactPickerRequest) : AutoReplyEditorRoute()
-    data class GroupMemberPicker(val request: GroupMemberPickerRequest) : AutoReplyEditorRoute()
-}
-
-private sealed class AutoReplyStepsRoute {
-    object Main : AutoReplyStepsRoute()
-    data class OptionPicker(val request: OptionPickerRequest) : AutoReplyStepsRoute()
-    data class ContactPicker(val request: ContactPickerRequest) : AutoReplyStepsRoute()
-    data class FavoritePicker(val request: FavoritePickerRequest) : AutoReplyStepsRoute()
-}
-
-private sealed class AutoReplyAiRoute {
-    object Main : AutoReplyAiRoute()
-    object Xiaozhi : AutoReplyAiRoute()
-    object Zhilia : AutoReplyAiRoute()
-    object ZhiliaConfigs : AutoReplyAiRoute()
-    object ZhiliaModels : AutoReplyAiRoute()
-    data class OptionPicker(val request: OptionPickerRequest) : AutoReplyAiRoute()
-}
 
 private sealed class RedPacketReplyStepsRoute {
     object Main : RedPacketReplyStepsRoute()

@@ -103,10 +103,6 @@ object FeatureRegistry {
             .register(QuickGroupChatLabelFeature())
             .register(QuickMomentsFeature())
             .register(QuickMarkReadFeature())
-            // 自动回复已下线：它会在后台常驻 AI 会话历史、小智 WebSocket、
-            // AudioRecord 与 OkHttp 连接池。源码保留，仅在注册表里摘除，
-            // 这样 AutoReplyRuntime / Xiaozhi* 相关类不会被加载。
-            // .register(AutoReplyFeature())
             .register(ConversationGroupFeature())
             .register(TypingReportBlockFeature())
             .register(PatBlockFeature())
