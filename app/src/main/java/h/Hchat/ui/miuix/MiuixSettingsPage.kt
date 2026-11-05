@@ -30,6 +30,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.PathInterpolator
 import android.webkit.WebView
 import android.widget.DatePicker
 import android.widget.FrameLayout
@@ -985,14 +986,10 @@ object MiuixSettingsPage {
             }
             activityBackHooks.clear()
         }
-        fun closePage() {
+        var closing = false
+        fun finishClose() {
             if (closed) return
             closed = true
-            hostTag.close = null
-            hostTag.collapseAgent = null
-            agentExitHandler = null
-            settingsBackHandlers.clear()
-            unhookActivityBack()
             runCatching {
                 page.findViewById<ComposeView>(android.R.id.content)?.disposeComposition()
             }.onFailure {
@@ -1005,6 +1002,27 @@ object MiuixSettingsPage {
             }
             runCatching { owner.destroy() }.onFailure {
                 h.Hchat.utils.HLog.e("[Hchat:MiuixSettings] 销毁页面 Owner 失败: ${it.message}", it)
+            }
+        }
+        fun closePage() {
+            if (closed || closing) return
+            closing = true
+            hostTag.close = null
+            hostTag.collapseAgent = null
+            agentExitHandler = null
+            settingsBackHandlers.clear()
+            unhookActivityBack()
+            val canAnimate = page.isAttachedToWindow && page.parent === decor && page.width > 0
+            if (canAnimate) {
+                page.animate()
+                    .translationX(page.width * 0.25f)
+                    .alpha(0.9f)
+                    .setDuration(260L)
+                    .setInterpolator(PathInterpolator(0.4f, 0f, 1f, 1f))
+                    .withEndAction { finishClose() }
+                    .start()
+            } else {
+                finishClose()
             }
         }
         fun handleBack() {
@@ -1254,6 +1272,16 @@ object MiuixSettingsPage {
         }
         installActivityBackHooks()
         page.requestFocus()
+        val slideWidth = if (decor.width > 0) decor.width else activity.resources.displayMetrics.widthPixels
+        // 与设置页内部二级页面一致的 Miuix 过渡：轻微右移 + 淡入
+        page.translationX = slideWidth * 0.25f
+        page.alpha = 0.9f
+        page.animate()
+            .translationX(0f)
+            .alpha(1f)
+            .setDuration(320L)
+            .setInterpolator(PathInterpolator(0.1f, 0.9f, 0.2f, 1f))
+            .start()
     }
 
     private fun findExistingPage(decor: ViewGroup): View? {
