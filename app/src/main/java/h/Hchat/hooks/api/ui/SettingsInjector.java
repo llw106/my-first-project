@@ -64,7 +64,7 @@ public class SettingsInjector {
     private static final String MORE_GROUP_CLASS =
             "com.tencent.mm.plugin.setting.ui.setting_new.settings.SettingGroupMore";
     private static final String MORE_FRONT_CLASS =
-            "com.tencent.mm.plugin.setting.ui.setting_new.settings.more.SettingGroupCareModeItem";
+            "com.tencent.mm.plugin.setting.ui.setting_new.settings.more.SettingGroupEmojiItem";
     private static final int HCHAT_PLUS_MENU_ID = -1212373075;
     private static final int HCHAT_PLUS_LONG_PRESS_TAG = -1212373074;
     private static final int QUICK_READ_PLUS_MENU_ID = -1212373073;
@@ -380,6 +380,11 @@ public class SettingsInjector {
                 }
                 if (fNameResId.equals(name)) {
                     return HCHAT_SETTING_ITEM_NAME_RES_ID;
+                }
+                if (method.getParameterCount() == 0
+                        && method.getReturnType() == String.class
+                        && "c8".equals(name)) {
+                    return PREFS_TITLE;
                 }
 
                 // 抽象方法返回默认值
