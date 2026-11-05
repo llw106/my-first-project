@@ -42,7 +42,8 @@ public class DexFinder {
     private static final String CACHE_COMPLETE = "cache.complete";
     private static final String CACHE_KEY = "cache.key";
     private static final String CACHE_SNAPSHOT_VERSION_KEY = "cache.snapshot.version";
-    private static final String CACHE_SNAPSHOT_VERSION = "2";
+    private static final String CACHE_SNAPSHOT_VERSION = "3";
+    private static final String CACHE_INCOMPLETE_MARK = "cache.incomplete.signature";
     private static final String LOCATOR_WISH_COMPLETE = "locator.wish.complete";
     private static final String LOCATOR_PACKET_COMPLETE = "locator.packet.complete";
     private static final String LOCATOR_ECS_COMPLETE = "locator.ecs.complete";
@@ -3016,6 +3017,9 @@ public class DexFinder {
                     break;
                 } catch (Throwable ignored) {}
             }
+            if (localMessageCreateTimeMethod == null) {
+                localMessageCreateTimeMethod = findCreateTimeBySysmsgAnchor();
+            }
         } catch (Throwable ignored) {}
         return count;
     }
@@ -3028,7 +3032,7 @@ public class DexFinder {
                             "will insert sysmsg from:",
                             "content null, cannot to insert sysmsg!",
                             "failed to insert sysmsg",
-                            "sysmsg inserted"));
+                            "sysmsg inserted: "));
             for (MethodData methodData : methods) {
                 try {
                     Method method = methodData.getMethodInstance(classLoader);
@@ -3707,11 +3711,37 @@ public class DexFinder {
             chatPageFragmentEnterMethod = loadMethod("chatPageFragmentEnterMethod");
             chatPageFragmentExitMethod = loadMethod("chatPageFragmentExitMethod");
             chatFooterSendClickMethod = loadMethod("chatFooterSendClickMethod");
-            return !cacheDescriptorInvalid;
+            if (cacheDescriptorInvalid) return false;
+            String missing = missingCoreSignature();
+            if (!missing.isEmpty()) {
+                String tried = cachePrefs.getString(CACHE_INCOMPLETE_MARK, "");
+                if (!missing.equals(tried)) {
+                    cachePrefs.edit().putString(CACHE_INCOMPLETE_MARK, missing).apply();
+                    h.Hchat.utils.HLog.e(TAG + "缓存缺少核心API，触发一次重新解析: " + missing);
+                    return false;
+                }
+            }
+            return true;
         } catch (Throwable e) {
             logDetail("读取缓存失败，重新解析: " + e.getMessage());
             return false;
         }
+    }
+
+    /** 缓存里缺了这些核心方法，相关功能会直接失效；缺失集合变化时值得重解析一次。 */
+    private String missingCoreSignature() {
+        StringBuilder sb = new StringBuilder();
+        if (serviceGetterMethod == null) sb.append("service,");
+        if (sendTextMsgClass == null) sb.append("sendText,");
+        if (emojiSendMethod == null) sb.append("emoji,");
+        if (emojiManagerSendMethod == null) sb.append("emojiMgr,");
+        if (contactMuteEnableMethod == null) sb.append("muteOn,");
+        if (contactMuteDisableMethod == null) sb.append("muteOff,");
+        if (contactMuteStateMethod == null) sb.append("muteState,");
+        if (groupMemberDisplayNameMethod == null) sb.append("groupNick,");
+        if (conversationDeleteMethod == null) sb.append("convDel,");
+        if (localMessageCreateTimeMethod == null) sb.append("localTime,");
+        return sb.length() == 0 ? "" : sb.toString();
     }
 
     private void resetCacheForRuntimeKey() {
@@ -5251,6 +5281,25 @@ public class DexFinder {
             }
         }
         return fallback;
+    }
+
+    /**
+     * 系统消息插入方法内部会调用 createTime 归一化方法（8.0.80 实测为 static long(String,long)，
+     * 但所在类与插入方法不在同一个类里），所以顺着调用关系找，别再按 owner 类找。
+     */
+    private Method findCreateTimeBySysmsgAnchor() {
+        try {
+            for (MethodData data : dexKit.findMethod(mkMethodUsingStrings("will insert sysmsg from:"))) {
+                for (MethodData invoke : data.getInvokes()) {
+                    try {
+                        Method method = invoke.getMethodInstance(classLoader);
+                        if (!isLocalMessageCreateTimeMethod(method)) continue;
+                        return KavaReflector.accessible(method);
+                    } catch (Throwable ignored) {}
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
     }
 
     private boolean isLocalMessageCreateTimeMethod(Method method) {
