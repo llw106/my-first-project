@@ -2505,6 +2505,7 @@ private object HchatConfigBackup {
 
     private val prefsNames = listOf(
         UI_PREFS_NAME,
+        SwipeQuoteSettings.PREFS_NAME,
         CallMediaLimitSettings.PREFS_NAME,
         FakeLocationSettings.PREFS_NAME,
         FinderMediaDownloadSettings.PREFS_NAME,
@@ -2969,6 +2970,7 @@ private fun practicalFeatureGroups(
                 MessageBlockFeature.ID,
                 QuickMarkReadFeature.ID,
                 MessageDetailsSettingsProvider.FEATURE_ID,
+                SwipeQuoteFeature.ID,
                 EmojiSaveFeature.ID,
                 CallMediaLimitFeature.ID,
                 EditMessageFeature.ID,
@@ -3698,7 +3700,7 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         SkipGlobalMiniProgramSplashAdsFeature.ID -> listOf("跳过全局小程序开屏广告", "小程序开屏广告", "启动广告", "全局广告")
         FakeLocationFeature.ID -> listOf("虚拟定位", "模拟定位", "小程序定位", "微信地图", "地图选点", "搜索地点", "经纬度", "GPS")
         WechatStepFeature.ID -> listOf("步数", "微信运动", "刷步", "计步", "运动步数")
-        SwipeQuoteFeature.ID -> listOf("滑动手势", "左滑引用", "右滑复读", "长按复读", "引用", "复读")
+        SwipeQuoteFeature.ID -> listOf("滑动手势", "左滑引用", "右滑复读", "长按复读", "菜单复读", "+1", "复读语音", "语音时长", "滑动距离", "引用", "复读")
         GameEmojiFeature.ID -> listOf("指定骰子猜拳", "自定义骰子", "骰子点数", "猜拳结果", "剪刀", "石头", "布", "发送时选择")
         VoiceForwardFeature.ID -> listOf("语音转发", "语音保存", "合并语音", "合并MP3", "转发弹窗", "好友列表", "群聊列表", "语音列表", "批量转发")
         ScheduledTaskFeature.ID -> listOf("定时任务", "定时发送", "群发任务", "计划发送", "循环发送", "每日发送", "每周发送", "朋友圈", "图文", "视文")
