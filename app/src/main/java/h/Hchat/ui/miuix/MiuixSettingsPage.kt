@@ -30,7 +30,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.view.animation.PathInterpolator
+import android.view.animation.Interpolator
 import android.webkit.WebView
 import android.widget.DatePicker
 import android.widget.FrameLayout
@@ -902,6 +902,27 @@ private fun RegisterSettingsBackHandler(onBack: (() -> Unit)?) {
 object MiuixSettingsPage {
     private const val PAGE_TAG = "Hchat:MiuixSettingsPage"
 
+    // 直接复用设置页内部二级页面（NavDisplay + NavTransitions.MiuixDefault）的真实速率：
+    // NavMotion 默认 programmatic = Tween(500ms, NavProgrammaticEasing = NavSettleEasing(0.8, 0.95))。
+    private const val NAV_SETTLE_DURATION_MS = 500L
+    // NavProgrammaticEasing = NavSettleEasing(0.8, 0.95) 的等价实现（该类在库内为 internal，无法直接引用）。
+    private val NAV_SETTLE_INTERPOLATOR: Interpolator = object : Interpolator {
+        private val cycle = 2.0 * Math.PI / 0.8
+        private val cycleSq = cycle * cycle
+        private val damping = 4.0 * Math.PI * 0.95 / 0.8
+        private val w = Math.sqrt(4.0 * cycleSq - damping * damping) / 2.0
+        private val r = -damping / 2.0
+        private val c2 = r / w
+
+        override fun getInterpolation(input: Float): Float {
+            val t = input.toDouble().coerceIn(0.0, 1.0)
+            val v = 1.0 + Math.exp(r * t) * (c2 * Math.sin(w * t) - Math.cos(w * t))
+            return v.toFloat().coerceIn(0f, 1f)
+        }
+    }
+
+    private fun navSettleInterpolator(): Interpolator = NAV_SETTLE_INTERPOLATOR
+
     private class SettingsPageHostTag(val floatingAgent: Boolean) {
         var close: (() -> Unit)? = null
         var collapseAgent: (() -> Unit)? = null
@@ -1017,8 +1038,8 @@ object MiuixSettingsPage {
                 page.animate()
                     .translationX(page.width * 0.25f)
                     .alpha(0.9f)
-                    .setDuration(260L)
-                    .setInterpolator(PathInterpolator(0.4f, 0f, 1f, 1f))
+                    .setDuration(NAV_SETTLE_DURATION_MS)
+                    .setInterpolator(navSettleInterpolator())
                     .withEndAction { finishClose() }
                     .start()
             } else {
@@ -1273,14 +1294,15 @@ object MiuixSettingsPage {
         installActivityBackHooks()
         page.requestFocus()
         val slideWidth = if (decor.width > 0) decor.width else activity.resources.displayMetrics.widthPixels
-        // 与设置页内部二级页面一致的 Miuix 过渡：轻微右移 + 淡入
+        // NavTransitions.MiuixDefault(relDepth = 1)：从右侧 25% 屏宽滑入，透明度 0.9 -> 1；
+        // 速率与 NavMotion 默认 programmatic 相同（500ms + NavProgrammaticEasing）。
         page.translationX = slideWidth * 0.25f
         page.alpha = 0.9f
         page.animate()
             .translationX(0f)
             .alpha(1f)
-            .setDuration(320L)
-            .setInterpolator(PathInterpolator(0.1f, 0.9f, 0.2f, 1f))
+            .setDuration(NAV_SETTLE_DURATION_MS)
+            .setInterpolator(navSettleInterpolator())
             .start()
     }
 
