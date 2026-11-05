@@ -105,15 +105,17 @@ private class MoreTabPurifyHooker(
             val add = screenClass.getDeclaredMethod("e", prefClass, Integer.TYPE)
             HookRegistry.get().hook(add, object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
-                    if (!moreTabScreens.contains(param.thisObject)) return
                     if (!enabled()) return
                     val preference = param.args.getOrNull(0) ?: return
                     val title = titleOf(preference)
                     if (title.isEmpty()) return
                     if (title == MoreTabPurifySettings.PROTECTED_ITEM) return
-                    if (!MoreTabPurifySettings.hidden(prefs).contains(title)) return
+                    // 「我」页条目 key 都是 settings_ 前缀（settings_mm_favorite / settings_my_album …）。
+                    // 不靠 screen 实例登记，因为条目是在 screen 构造之后才逐个添加的。
                     val key = keyOf(preference)
-                    if (key.isNotEmpty() && shadow.put(key, preference) == null) {
+                    if (key.isEmpty() || !key.startsWith("settings_")) return
+                    if (!MoreTabPurifySettings.hidden(prefs).contains(title)) return
+                    if (shadow.put(key, preference) == null) {
                         HLog.i("$TAG 添加时拦截: $title ($key)")
                     }
                     param.result = null
@@ -121,6 +123,18 @@ private class MoreTabPurifyHooker(
             })
             HLog.i("$TAG 添加时拦截 Hook 已安装 (g0.e)")
         }.onFailure { HLog.e("$TAG 添加时拦截 Hook 失败: ${it.message}", it) }
+
+        // 关键：屏幕对象构造完成时条目就已经从 XML 灌进来了，这里立刻清理，赶在第一帧之前。
+        runCatching {
+            val screenClass = classLoader.loadClass("com.tencent.mm.ui.base.preference.g0")
+            HookRegistry.get().hook(screenClass.declaredConstructors.first(), object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    runCatching { purifyScreen(param.thisObject) }
+                        .onFailure { HLog.e("$TAG 构造期清理异常: ${it.message}", it) }
+                }
+            })
+            HLog.i("$TAG 构造期清理 Hook 已安装 (g0.<init>)")
+        }.onFailure { HLog.e("$TAG 构造期清理 Hook 失败: ${it.message}", it) }
 
         // 兜底 1：微信按 key 回取条目时，若已被隐藏则把影子对象交回去，避免 NPE。
         runCatching {
@@ -175,12 +189,15 @@ private class MoreTabPurifyHooker(
     private fun purify(fragment: Any?) {
         if (fragment == null) return
         if (!fragment.javaClass.name.endsWith("MoreTabUI")) return
+        purifyScreen(screenOf(fragment))
+    }
+
+    private fun purifyScreen(screen: Any?) {
+        if (screen == null) return
         if (!enabled()) {
             return
         }
 
-        val screen = screenOf(fragment) ?: return
-        moreTabScreens.add(screen)
         val items = preferenceList(screen) ?: return
         if (items.isEmpty()) return
 
@@ -201,6 +218,10 @@ private class MoreTabPurifyHooker(
             }
         }
 
+        // 只认「我」页：同时含「个人信息」与「设置」这两项。其它设置页直接放过。
+        if (!titles.contains("个人信息") || !titles.contains(MoreTabPurifySettings.PROTECTED_ITEM)) return
+
+        moreTabScreens.add(screen)
         MoreTabPurifySettings.rememberDiscovered(prefs, titles)
 
         if (toRemove.isEmpty()) return
