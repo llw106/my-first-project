@@ -133,6 +133,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -289,6 +290,8 @@ import h.Hchat.hooks.items.zombiecheck.ZombieCheckFeature
 import h.Hchat.hooks.items.zombiecheck.ZombieCheckResultType
 import h.Hchat.hooks.items.zombiecheck.ZombieCheckSettings
 import h.Hchat.hooks.items.membertitle.MemberTitleFeature
+import h.Hchat.hooks.items.moretabpurify.MoreTabPurifyFeature
+import h.Hchat.hooks.items.moretabpurify.MoreTabPurifySettings
 import h.Hchat.hooks.items.membertitle.MemberTitleSettings
 import h.Hchat.hooks.items.membertitle.MemberTitleStore
 import h.Hchat.hooks.items.messagebubble.MessageBubbleFeature
@@ -2511,6 +2514,7 @@ private object HchatConfigBackup {
         QuickMarkReadSettings.PREFS_NAME,
         CustomNotificationSettings.PREFS_NAME,
         ConversationGroupStore.PREFS_NAME,
+        MoreTabPurifySettings.PREFS_NAME,
         InputHintSettings.PREFS_NAME,
         AutoOriginalImageSettings.PREFS_NAME,
         AutoViewOriginalSettings.PREFS_NAME,
@@ -3029,7 +3033,8 @@ private fun practicalFeatureGroups(
                 QuickContactEditFeature.ID,
                 QuickGroupChatLabelFeature.ID,
                 QuickMomentsFeature.ID,
-                HideChatMenuFeature.ID
+                HideChatMenuFeature.ID,
+                MoreTabPurifyFeature.ID
             )
         ),
         FeatureGroupEntry(
@@ -3631,6 +3636,9 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         MultiRecallFeature.ID -> listOf("多选撤回", "批量撤回", "多选消息", "分享菜单", "撤回自己消息")
         MessageForwardFeature.ID -> listOf("转发", "转发[H]", "朋友圈", "好友", "分享", "群发助手", "好友标签", "朋友圈转发", "个人主页朋友圈")
         SelectedMessagesFeature.ID -> listOf("群发助手", "群发助手[H]", "定时转发[H]", "多选消息", "定时转发", "模块群发", "微信原生群发助手", "群发助手间隔延迟", "群发间隔延迟")
+        MoreTabPurifyFeature.ID -> listOf(
+            "页面净化", "我页", "我页面", "隐藏入口", "发现页管理", "服务", "收藏", "朋友圈", "表情", "小店与卡包"
+        )
         ConversationGroupFeature.ID -> listOf(
             "会话分组", "聊天分组", "嵌套分组", "归拢会话", "隐藏会话", "移动会话", "分组管理"
         )
@@ -4214,6 +4222,7 @@ private fun FeatureSettingsPage(
         GroupNicknameColorSettings.FEATURE_ID -> GroupNicknameColorMiuixPage(context, provider, onBack)
         MemberTitleFeature.ID -> MemberTitleMiuixPage(context, provider, onBack)
         AntiRecallFeature.ID -> AntiRecallMiuixPage(context, provider, onBack)
+        MoreTabPurifyFeature.ID -> MoreTabPurifyMiuixPage(context, provider, onBack)
         MultiRecallFeature.ID -> MultiRecallMiuixPage(context, provider, onBack)
         MessageForwardFeature.ID -> MessageForwardMiuixPage(context, provider, onBack)
         SelectedMessagesFeature.ID -> SelectedMessagesMiuixPage(context, provider, onBack)
@@ -4356,6 +4365,84 @@ private fun MultiRecallMiuixPage(
                         "多选撤回",
                         "在多选消息的分享菜单中显示批量撤回",
                         MultiRecallSettings.DEFAULT_ENABLE
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MoreTabPurifyMiuixPage(
+    context: Context,
+    provider: FeatureSettingsProvider,
+    onBack: () -> Unit
+) {
+    val sp = remember { HchatStorage.preferences(context, MoreTabPurifySettings.PREFS_NAME) }
+    val listState = rememberLazyListState()
+    val scrollBehavior = MiuixScrollBehavior()
+    var version by remember { mutableIntStateOf(0) }
+    val enabled = remember(version) {
+        sp.getBoolean(MoreTabPurifySettings.KEY_ENABLE, MoreTabPurifySettings.DEFAULT_ENABLE)
+    }
+    val items = remember(version) { MoreTabPurifySettings.allItems(sp) }
+    PageScaffold(
+        title = provider.title(),
+        largeTitle = provider.title(),
+        scrollBehavior = scrollBehavior,
+        bottomBar = {
+            BottomActionBar("返回", onBack)
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
+            state = listState,
+            contentPadding = PaddingValues(
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 84.dp
+            )
+        ) {
+            item { SmallTitle(text = "总开关") }
+            item {
+                SettingsCard {
+                    SwitchRow(
+                        sp,
+                        MoreTabPurifySettings.KEY_ENABLE,
+                        "页面净化",
+                        "关闭后「我」页面恢复原样，所有入口正常显示",
+                        MoreTabPurifySettings.DEFAULT_ENABLE
+                    )
+                }
+            }
+            item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "我页入口") }
+            item {
+                SettingsCard {
+                    for (item in items) {
+                        val hidden = MoreTabPurifySettings.isHidden(sp, item)
+                        SwitchRow(
+                            checked = !hidden,
+                            title = item,
+                            summary = if (hidden) "已从「我」页面隐藏" else "显示在「我」页面",
+                            enabled = enabled,
+                            onCheckedChange = { visible ->
+                                MoreTabPurifySettings.setHidden(sp, item, !visible)
+                                version++
+                            }
+                        )
+                    }
+                }
+            }
+            item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "说明") }
+            item {
+                SettingsCard {
+                    Text(
+                        text = "· 开关打开＝「我」页面显示该入口，关闭＝隐藏\n" +
+                            "· 「设置」不提供开关，避免关掉后无法进入设置\n" +
+                            "· 首次进入「我」页面时会自动记录真实条目，之后列表会补全\n" +
+                            "· 修改后重新进入「我」页面生效",
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(16.dp)
                     )
                 }
             }
