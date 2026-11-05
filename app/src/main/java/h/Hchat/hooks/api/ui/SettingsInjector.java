@@ -64,7 +64,7 @@ public class SettingsInjector {
     private static final String MORE_GROUP_CLASS =
             "com.tencent.mm.plugin.setting.ui.setting_new.settings.SettingGroupMore";
     private static final String MORE_FRONT_CLASS =
-            "com.tencent.mm.plugin.setting.ui.setting_new.settings.more.SettingGroupEmojiItem";
+            "com.tencent.mm.plugin.setting.ui.setting_new.settings.more.SettingGroupTeenMode";
     private static final int HCHAT_PLUS_MENU_ID = -1212373075;
     private static final int HCHAT_PLUS_LONG_PRESS_TAG = -1212373074;
     private static final int QUICK_READ_PLUS_MENU_ID = -1212373073;
@@ -264,7 +264,7 @@ public class SettingsInjector {
         }
 
         try {
-            // 入口挂到「设置 → 更多」页：组类用 SettingGroupMore，前置项用关怀模式项
+            // 入口挂到「设置 → 更多」页最顶部：组类用 SettingGroupMore，锚点用未成年人模式项
             Class<?> moreGroupClass = KavaReflector.loadClass(MORE_GROUP_CLASS, classLoader);
             Class<?> moreFrontClass = KavaReflector.loadClass(MORE_FRONT_CLASS, classLoader);
             boolean targetMore = moreGroupClass != null && moreFrontClass != null;
@@ -373,9 +373,10 @@ public class SettingsInjector {
                     Class<?> parentClass = modernLocationParentClass != null
                             ? modernLocationParentClass
                             : groupSettingItemClass;
-                    Class<?> frontClass = modernLocationFrontClass != null
-                            ? modernLocationFrontClass
-                            : parentSettingItemClass;
+                    Class<?> frontClass = modernLocationFrontClass;
+                    if (frontClass == null && !targetMore) {
+                        frontClass = parentSettingItemClass;
+                    }
                     return newSettingLocation(parentClass, frontClass);
                 }
                 if (fNameResId.equals(name)) {
@@ -423,11 +424,12 @@ public class SettingsInjector {
 
             logDetail("[Modern] ProxyBuilder 代理类已创建: " + proxyClass.getName());
             modernLocationParentClass = groupSettingItemClass;
-            modernLocationFrontClass = parentSettingItemClass;
+            modernLocationFrontClass = targetMore ? null : parentSettingItemClass;
 
             // === Step 3: hook SettingGroupPersonalInfo 返回 SettingLocation ===
             // 找到返回 SettingLocation 的方法
-            for (Method m : KavaReflector.declaredMethods(targetMore ? null : childSettingItemClass)) {
+            Class<?> locationHostClass = targetMore ? parentSettingItemClass : childSettingItemClass;
+            for (Method m : KavaReflector.declaredMethods(locationHostClass)) {
                 if (m.getReturnType() == dex.settingLocationClass) {
                     HookRegistry.get().hook(m, new XC_MethodHook(
                             de.robv.android.xposed.callbacks.XCallback.PRIORITY_HIGHEST) {
@@ -436,14 +438,17 @@ public class SettingsInjector {
                             try {
                                 Object oldLocation = param.getResult();
                                 Class<?> parentClass = readSettingLocationClass(oldLocation, 0, groupSettingItemClass);
-                                Class<?> frontClass = readSettingLocationClass(oldLocation, 1, parentSettingItemClass);
+                                Class<?> frontClass = targetMore
+                                        ? readSettingLocationClassOrNull(oldLocation, 1)
+                                        : readSettingLocationClass(oldLocation, 1, parentSettingItemClass);
                                 if (frontClass == proxyClass) {
                                     return;
                                 }
                                 modernLocationParentClass = parentClass;
                                 modernLocationFrontClass = frontClass;
-                                logDetail("[Modern] 接入设置入口链: front="
-                                        + frontClass.getName());
+                                logDetail("[Modern] 接入设置入口链: anchor="
+                                        + (locationHostClass == null ? "null" : locationHostClass.getSimpleName())
+                                        + " front=" + String.valueOf(frontClass));
                                 Object location = newSettingLocation(parentClass, proxyClass);
                                 param.setResult(location);
                             } catch (Throwable e) {
@@ -451,7 +456,9 @@ public class SettingsInjector {
                             }
                         }
                     });
-                    logDetail("[Modern] SettingGroupPersonalInfo.hook: " + m.getName());
+                    logDetail("[Modern] 入口链 Hook: "
+                            + (locationHostClass == null ? "null" : locationHostClass.getSimpleName())
+                            + "#" + m.getName());
                     break;
                 }
             }
@@ -544,6 +551,24 @@ public class SettingsInjector {
         return KavaReflector.newInstance(
                 KavaReflector.findConstructor(dex.settingLocationClass, Class.class, Class.class),
                 parentClass, frontClass);
+    }
+
+    /** 读取 SettingLocation 的 Class 字段，null 保持 null（用于把条目插到分组最前面）。 */
+    private Class<?> readSettingLocationClassOrNull(Object location, int index) {
+        if (location == null) return null;
+        int seen = 0;
+        for (Field field : KavaReflector.declaredFields(location.getClass())) {
+            try {
+                if (field.getType() != Class.class) continue;
+                Object value = KavaReflector.readField(field, location);
+                if (seen == index) {
+                    return value instanceof Class<?> ? (Class<?>) value : null;
+                }
+                seen++;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
     }
 
     private Class<?> readSettingLocationClass(Object location, int index, Class<?> fallback) {
