@@ -3056,7 +3056,8 @@ private fun practicalFeatureGroups(
                 SkipMiniProgramVideoAdsFeature.ID,
                 SkipGlobalMiniProgramSplashAdsFeature.ID,
                 FakeLocationFeature.ID,
-                GameEmojiFeature.ID,
+                WechatStepFeature.ID,
+GameEmojiFeature.ID,
                 FakeScanCameraFeature.ID,
                 FinderMediaDownloadFeature.ID,
                 SkipWebRiskSettingsProvider.FEATURE_ID
