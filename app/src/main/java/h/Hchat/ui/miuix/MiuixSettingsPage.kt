@@ -362,6 +362,10 @@ import h.Hchat.hooks.items.protobuf.ProtobufPacketFeature
 import h.Hchat.hooks.items.patblock.PatBlockSettings
 import h.Hchat.hooks.items.profileid.ProfileIdFeature
 import h.Hchat.hooks.items.profileid.ProfileIdSettings
+import h.Hchat.hooks.items.customnickname.CustomNicknameFeature
+import h.Hchat.hooks.items.customnickname.CustomNicknameSettings
+import h.Hchat.hooks.items.profilewxid.ProfileWxidFeature
+import h.Hchat.hooks.items.profilewxid.ProfileWxidSettings
 import h.Hchat.hooks.items.protobuf.ProtobufPacketRuntime
 import h.Hchat.hooks.items.protobuf.ProtobufPacketSettings
 import h.Hchat.hooks.items.quickcontactedit.QuickContactEditFeature
@@ -11889,7 +11893,18 @@ private fun CustomFriendAvatarMiuixPage(
     var selectedWxid by remember { mutableStateOf("") }
     var contacts by remember { mutableStateOf(emptyList<ContactOption>()) }
     var revision by remember { mutableStateOf(0) }
-
+    val nickSp = remember { HchatStorage.preferences(context, CustomNicknameSettings.PREFS_NAME) }
+    var nickEnabled by remember {
+        mutableStateOf(
+            nickSp.getBoolean(CustomNicknameSettings.KEY_ENABLE, CustomNicknameSettings.DEFAULT_ENABLE)
+        )
+    }
+    val wxidSp = remember { HchatStorage.preferences(context, ProfileWxidSettings.PREFS_NAME) }
+    var wxidEnabled by remember {
+        mutableStateOf(
+            wxidSp.getBoolean(ProfileWxidSettings.KEY_ENABLE, ProfileWxidSettings.DEFAULT_ENABLE)
+        )
+    }
     LaunchedEffect(revision) {
         loadContacts(context, ContactPickerMode.BOTH, false) { result, _ -> contacts = result }
     }
@@ -11920,6 +11935,16 @@ private fun CustomFriendAvatarMiuixPage(
                             bottom = padding.calculateBottomPadding() + 84.dp
                         )
                     ) {
+                        item { SmallTitle(text = "自定义好友资料") }
+                        item {
+                            SettingsCard {
+                                ActionRow(
+                                    title = "选择好友或群聊",
+                                    summary = selected?.label ?: "选择要设置头像、昵称、微信号的好友或群聊",
+                                    onClick = { route = CustomFriendAvatarRoute.CONTACT_PICKER }
+                                )
+                            }
+                        }
                         item { SmallTitle(text = "自定义头像") }
                         item {
                             SettingsCard {
@@ -11933,12 +11958,6 @@ private fun CustomFriendAvatarMiuixPage(
                                     }
                                 )
                                 if (enabled) {
-                                    InsetDivider()
-                                    ActionRow(
-                                        title = "选择好友或群聊",
-                                        summary = selected?.label ?: "选择要设置头像的好友或群聊",
-                                        onClick = { route = CustomFriendAvatarRoute.CONTACT_PICKER }
-                                    )
                                     if (selected != null) {
                                         InsetDivider()
                                         ActionRow(
@@ -11961,6 +11980,103 @@ private fun CustomFriendAvatarMiuixPage(
                                             }
                                         )
                                     }
+                                }
+                            }
+                        }
+                        item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "自定义昵称") }
+                        item {
+                            SettingsCard {
+                                SwitchRow(
+                                    checked = nickEnabled,
+                                    title = "启用自定义昵称",
+                                    summary = "仅修改本机显示，不会更改微信备注",
+                                    onCheckedChange = { value ->
+                                        nickEnabled = value
+                                        nickSp.edit().putBoolean(CustomNicknameSettings.KEY_ENABLE, value).apply()
+                                    }
+                                )
+                                if (nickEnabled && selected != null) {
+                                    InsetDivider()
+                                    ActionRow(
+                                        title = if (CustomNicknameSettings.hasNickname(context, selected.id)) "修改昵称" else "设置昵称",
+                                        summary = CustomNicknameSettings.nickname(context, selected.id)
+                                            ?: "输入仅本机显示的昵称",
+                                        onClick = {
+                                            showCustomNicknameEditor(context, selected.id) { revision++ }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        if (nickEnabled) {
+                            item {
+                                SettingsCard {
+                                    SwitchRow(
+                                        nickSp,
+                                        CustomNicknameSettings.KEY_SCOPE_CONVERSATION,
+                                        "主页会话列表",
+                                        "会话列表的标题使用自定义昵称",
+                                        CustomNicknameSettings.DEFAULT_SCOPE
+                                    )
+                                    InsetDivider()
+                                    SwitchRow(
+                                        nickSp,
+                                        CustomNicknameSettings.KEY_SCOPE_CHAT,
+                                        "聊天页标题",
+                                        "聊天页顶部的标题使用自定义昵称",
+                                        CustomNicknameSettings.DEFAULT_SCOPE
+                                    )
+                                    InsetDivider()
+                                    SwitchRow(
+                                        nickSp,
+                                        CustomNicknameSettings.KEY_SCOPE_GROUP_MEMBER,
+                                        "群成员昵称",
+                                        "群聊内成员的显示名使用自定义昵称",
+                                        CustomNicknameSettings.DEFAULT_SCOPE
+                                    )
+                                    InsetDivider()
+                                    SwitchRow(
+                                        nickSp,
+                                        CustomNicknameSettings.KEY_CONVERSATION_MENU,
+                                        "长按菜单入口",
+                                        "在会话长按菜单中显示「自定义昵称」",
+                                        CustomNicknameSettings.DEFAULT_MENU
+                                    )
+                                }
+                            }
+                        }
+                        item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "自定义微信号") }
+                        item {
+                            SettingsCard {
+                                SwitchRow(
+                                    checked = wxidEnabled,
+                                    title = "启用自定义微信号",
+                                    summary = "仅在本机的好友资料页显示，不写入微信",
+                                    onCheckedChange = { value ->
+                                        wxidEnabled = value
+                                        wxidSp.edit().putBoolean(ProfileWxidSettings.KEY_ENABLE, value).apply()
+                                    }
+                                )
+                                if (wxidEnabled && selected != null) {
+                                    InsetDivider()
+                                    ActionRow(
+                                        title = if (ProfileWxidSettings.hasCustom(context, selected.id)) "修改微信号" else "设置微信号",
+                                        summary = ProfileWxidSettings.custom(context, selected.id)
+                                            ?: "输入仅本机显示的微信号",
+                                        onClick = {
+                                            showCustomWxidEditor(context, selected.id) { revision++ }
+                                        }
+                                    )
+                                }
+                                if (wxidEnabled) {
+                                    InsetDivider()
+                                    SwitchRow(
+                                        wxidSp,
+                                        ProfileWxidSettings.KEY_MENU,
+                                        "长按菜单入口",
+                                        "在会话长按菜单中显示「自定义微信号」",
+                                        ProfileWxidSettings.DEFAULT_MENU
+                                    )
                                 }
                             }
                         }
@@ -12053,6 +12169,50 @@ private fun CustomFriendAvatarMiuixPage(
             )
         }
     }
+}
+
+private fun showCustomNicknameEditor(context: Context, wxid: String, onChanged: () -> Unit) {
+    val activity = context as? Activity
+    if (activity == null) {
+        Toast.makeText(context, "当前页面无法打开输入框", Toast.LENGTH_SHORT).show()
+        return
+    }
+    VoiceForwardMiuixDialog.showTextInput(
+        activity = activity,
+        title = "自定义昵称",
+        summary = "仅本机显示，留空并确定可恢复原名",
+        initialValue = CustomNicknameSettings.nickname(context, wxid).orEmpty(),
+        placeholder = "输入想显示的名称",
+        maxLength = 32,
+        allowEmpty = true,
+        onConfirm = { value ->
+            CustomNicknameSettings.setNickname(context, wxid, value)
+            onChanged()
+        },
+        onDismiss = {}
+    )
+}
+
+private fun showCustomWxidEditor(context: Context, wxid: String, onChanged: () -> Unit) {
+    val activity = context as? Activity
+    if (activity == null) {
+        Toast.makeText(context, "当前页面无法打开输入框", Toast.LENGTH_SHORT).show()
+        return
+    }
+    VoiceForwardMiuixDialog.showTextInput(
+        activity = activity,
+        title = "自定义微信号",
+        summary = "仅本机资料页显示，留空并确定可恢复原名",
+        initialValue = ProfileWxidSettings.custom(context, wxid).orEmpty(),
+        placeholder = "输入想显示的微信号",
+        maxLength = 32,
+        allowEmpty = true,
+        onConfirm = { value ->
+            ProfileWxidSettings.setCustom(context, wxid, value)
+            onChanged()
+        },
+        onDismiss = {}
+    )
 }
 
 @Composable

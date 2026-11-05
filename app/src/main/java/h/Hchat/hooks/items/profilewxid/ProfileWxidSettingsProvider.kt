@@ -6,6 +6,6 @@ import h.Hchat.ui.SimpleFeatureSettingsProvider
 class ProfileWxidSettingsProvider : SimpleFeatureSettingsProvider(
     ProfileWxidFeature.ID,
     "自定义微信号",
-    "隐藏好友资料页上的微信号，或换成本机自定义的显示内容",
+    "在好友资料页把微信号换成本机自定义的内容",
     FeatureSettingsProvider.CATEGORY_PRACTICAL
 )

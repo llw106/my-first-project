@@ -2,6 +2,7 @@ package h.Hchat.hooks.items.customnickname
 
 import android.text.SpannableStringBuilder
 import de.robv.android.xposed.XC_MethodHook
+import de.robv.android.xposed.XposedBridge
 import h.Hchat.hooks.api.core.WeChatApis
 import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.hooks.core.HookRegistry
@@ -125,7 +126,11 @@ class CustomNicknameRuntime(
     }
 
     private fun log(message: String, throwable: Throwable?) {
-        HLog.e("$TAG $message", throwable)
+        if (throwable == null) {
+            XposedBridge.log("$TAG $message")
+        } else {
+            HLog.e("$TAG $message", throwable)
+        }
     }
 
     private companion object {

@@ -18,7 +18,7 @@ class ProfileWxidFeature : BaseFeature() {
     override fun name(): String = "自定义微信号"
 
     override fun onFeatureInit(context: FeatureContext) {
-        registerSettingsProvider(ProfileWxidSettingsProvider())
+        // 配置项并入「自定义好友资料」页，首页不再单独列出。
     }
 
     override fun onFeatureInstall(context: FeatureContext) {

@@ -89,9 +89,7 @@ class ProfileWxidRuntime(
         if (!ProfileWxidSettings.enabled(host)) return true
         val decor = activity.window?.decorView as? ViewGroup ?: return true
         val wxid = resolveWxid(activity)
-        val custom = ProfileWxidSettings.custom(host, wxid)
-        val hide = custom == null && ProfileWxidSettings.hideWhenNoCustom(host)
-        if (custom == null && !hide) return true
+        val custom = ProfileWxidSettings.custom(host, wxid) ?: return true
 
         val textViews = ArrayList<TextView>()
         collectTextViews(decor, textViews)
@@ -101,25 +99,13 @@ class ProfileWxidRuntime(
             runCatching { rewrite(label, custom) }
                 .onFailure { logger("改写微信微信号 TextView 失败", it) }
         }
-        log("已处理微信号，wxid=$wxid custom=${custom ?: "<隐藏>"}", null)
+        log("已处理微信号，wxid=$wxid custom=$custom", null)
         return true
     }
 
-    private fun rewrite(label: TextView, custom: String?) {
+    private fun rewrite(label: TextView, custom: String) {
         val raw = label.text?.toString()?.trim().orEmpty()
         val row = findRow(label)
-        if (custom == null) {
-            label.visibility = View.GONE
-            val sibling = findSiblingValue(row, label)
-            val rowHeight = row?.height ?: 0
-            val maxRowHeight = (MAX_HIDE_ROW_DP * label.resources.displayMetrics.density).toInt()
-            if (row != null && rowHeight in 1..maxRowHeight) {
-                row.visibility = View.GONE
-            } else {
-                sibling?.visibility = View.GONE
-            }
-            return
-        }
         if (raw.length > LABEL_LENGTH) {
             // 一个 TextView 里就是「微信号：xxx」，直接替换冒号后的内容。
             label.text = "$LABEL：$custom"
@@ -210,6 +196,5 @@ class ProfileWxidRuntime(
         private const val MAX_ATTEMPTS = 4
         private const val RETRY_DELAY_MS = 150L
         private const val MAX_ROW_DEPTH = 5
-        private const val MAX_HIDE_ROW_DP = 180
     }
 }

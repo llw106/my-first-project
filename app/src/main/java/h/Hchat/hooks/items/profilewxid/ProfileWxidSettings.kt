@@ -11,11 +11,9 @@ object ProfileWxidSettings {
 
     const val PREFS_NAME = "Hchat_profile_wxid_config"
     const val KEY_ENABLE = "enable"
-    const val KEY_HIDE = "hide_when_no_custom"
     const val KEY_MENU = "conversation_menu"
 
     const val DEFAULT_ENABLE = false
-    const val DEFAULT_HIDE = true
     const val DEFAULT_MENU = true
 
     private const val KEY_PREFIX = "wxid_"
@@ -25,10 +23,6 @@ object ProfileWxidSettings {
 
     fun menuEnabled(context: Context): Boolean =
         enabled(context) && preferences(context).getBoolean(KEY_MENU, DEFAULT_MENU)
-
-    /** 没有自定义值时，是否直接把原生微信号整行隐藏。 */
-    fun hideWhenNoCustom(context: Context): Boolean =
-        preferences(context).getBoolean(KEY_HIDE, DEFAULT_HIDE)
 
     fun custom(context: Context, wxid: String?): String? {
         val id = wxid?.trim().orEmpty()
@@ -40,6 +34,18 @@ object ProfileWxidSettings {
     }
 
     fun hasCustom(context: Context, wxid: String?): Boolean = custom(context, wxid) != null
+
+    fun configured(context: Context): List<Pair<String, String>> =
+        preferences(context).all.entries
+            .mapNotNull { (key, value) ->
+                val text = (value as? String)?.trim().orEmpty()
+                if (!key.startsWith(KEY_PREFIX) || text.isEmpty()) {
+                    null
+                } else {
+                    key.removePrefix(KEY_PREFIX) to text
+                }
+            }
+            .sortedBy { it.first }
 
     fun setCustom(context: Context, wxid: String, value: String?) {
         val id = wxid.trim()

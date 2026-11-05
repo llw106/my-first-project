@@ -18,7 +18,7 @@ class CustomNicknameFeature : BaseFeature() {
     override fun name(): String = "自定义昵称"
 
     override fun onFeatureInit(context: FeatureContext) {
-        registerSettingsProvider(CustomNicknameSettingsProvider())
+        // 配置项并入「自定义好友资料」页，首页不再单独列出。
     }
 
     override fun onFeatureInstall(context: FeatureContext) {
