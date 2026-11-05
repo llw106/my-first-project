@@ -2,8 +2,11 @@ package h.Hchat.hooks.core
 
 import android.app.Application
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * 全局的 TextView#setText 改写分发器。
@@ -18,7 +21,17 @@ object TextViewRewriteHub {
         fun rewrite(param: XC_MethodHook.MethodHookParam)
     }
 
-    private val rewriters = ArrayList<Rewriter>()
+    private val rewriters = CopyOnWriteArrayList<Rewriter>()
+
+    /** 映射表重建等脏活放到带 Looper 的后台线程，避免堵住 UI 线程。 */
+    private val worker: Handler by lazy {
+        val thread = HandlerThread("Hchat-TextRewrite").apply { start() }
+        Handler(thread.looper)
+    }
+
+    fun runOnWorker(block: () -> Unit) {
+        worker.post(block)
+    }
 
     @Volatile
     private var installed = false

@@ -1,6 +1,7 @@
 package h.Hchat.hooks.items.profilewxid
 
 import android.os.SystemClock
+import java.util.concurrent.atomic.AtomicBoolean
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import h.Hchat.hooks.api.core.WeChatApis
@@ -28,11 +29,14 @@ class ProfileWxidRuntime(
     @Volatile
     private var builtAt = 0L
 
+    private val building = AtomicBoolean(false)
+
     fun install() {
         if (installed) return
         installed = true
         val active = TextViewRewriteHub.register(this)
         log(if (active) "文本改写已注册" else "非界面进程，跳过文本改写", null)
+        if (active) refreshIfNeeded()
     }
 
     /** 设置页保存后调用，让映射立即重建。 */
@@ -77,9 +81,20 @@ class ProfileWxidRuntime(
     private fun refreshIfNeeded() {
         val now = SystemClock.elapsedRealtime()
         if (now - builtAt < REFRESH_INTERVAL_MS) return
-        builtAt = now
-        runCatching { build() }
-            .onFailure { logger("重建微信号映射失败", it) }
+        if (!building.compareAndSet(false, true)) return
+        TextViewRewriteHub.runOnWorker {
+            val startedAt = SystemClock.elapsedRealtime()
+            try {
+                build()
+                val cost = SystemClock.elapsedRealtime() - startedAt
+                if (cost >= SLOW_BUILD_MS) log("重建映射耗时 ${cost}ms", null)
+            } catch (t: Throwable) {
+                logger("重建微信号映射失败", t)
+            } finally {
+                builtAt = SystemClock.elapsedRealtime()
+                building.set(false)
+            }
+        }
     }
 
     private fun build() {
@@ -117,7 +132,8 @@ class ProfileWxidRuntime(
     private companion object {
         private const val TAG = "[Hchat:ProfileWxid]"
         private const val LABEL = "微信号"
-        private const val REFRESH_INTERVAL_MS = 2000L
+        private const val REFRESH_INTERVAL_MS = 10000L
+        private const val SLOW_BUILD_MS = 200L
         private const val MIN_ALIAS_LENGTH = 4
     }
 }
