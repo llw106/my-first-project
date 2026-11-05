@@ -62,6 +62,10 @@ private class MoreTabPurifyHooker(
      */
     private val shadow = java.util.concurrent.ConcurrentHashMap<String, Any>()
 
+    /** 已确认属于「我」页的 PreferenceScreen 实例，用于限定添加拦截的作用范围。 */
+    private val moreTabScreens: MutableSet<Any> =
+        java.util.Collections.newSetFromMap(java.util.WeakHashMap<Any, Boolean>())
+
     @Synchronized
     fun install(): Boolean {
         if (installed) return true
@@ -84,6 +88,39 @@ private class MoreTabPurifyHooker(
                     .onFailure { HLog.e("$TAG 处理异常: ${it.message}", it) }
             }
         }
+
+        // 前置：条目在添加当场就被拦下，冷启动打开「我」页时不再"先显示再消失"。
+        runCatching {
+            val screenClass = classLoader.loadClass("com.tencent.mm.ui.base.preference.g0")
+            val prefClass = classLoader.loadClass("com.tencent.mm.ui.base.preference.Preference")
+            val moreTabClass = classLoader.loadClass("com.tencent.mm.ui.MoreTabUI")
+            // 登记「我」页的 screen 实例：构造时 + 每次 onTabResume(F0) 进入前。
+            HookRegistry.get().hook(moreTabClass.getDeclaredConstructor(), object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) = rememberScreen(param.thisObject)
+            })
+            HookRegistry.get().hook(moreTabClass.getDeclaredMethod("F0"), object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) = rememberScreen(param.thisObject)
+            })
+            // g0.e(Preference, index) 才是真正的"添加条目"入口（g0.d 只是包一层）。
+            val add = screenClass.getDeclaredMethod("e", prefClass, Integer.TYPE)
+            HookRegistry.get().hook(add, object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (!moreTabScreens.contains(param.thisObject)) return
+                    if (!enabled()) return
+                    val preference = param.args.getOrNull(0) ?: return
+                    val title = titleOf(preference)
+                    if (title.isEmpty()) return
+                    if (title == MoreTabPurifySettings.PROTECTED_ITEM) return
+                    if (!MoreTabPurifySettings.hidden(prefs).contains(title)) return
+                    val key = keyOf(preference)
+                    if (key.isNotEmpty() && shadow.put(key, preference) == null) {
+                        HLog.i("$TAG 添加时拦截: $title ($key)")
+                    }
+                    param.result = null
+                }
+            })
+            HLog.i("$TAG 添加时拦截 Hook 已安装 (g0.e)")
+        }.onFailure { HLog.e("$TAG 添加时拦截 Hook 失败: ${it.message}", it) }
 
         // 兜底 1：微信按 key 回取条目时，若已被隐藏则把影子对象交回去，避免 NPE。
         runCatching {
@@ -124,14 +161,26 @@ private class MoreTabPurifyHooker(
         }
     }
 
+    private fun enabled(): Boolean =
+        prefs.getBoolean(MoreTabPurifySettings.KEY_ENABLE, MoreTabPurifySettings.DEFAULT_ENABLE)
+
+    private fun rememberScreen(fragment: Any?) {
+        if (fragment == null) return
+        runCatching {
+            val screen = screenOf(fragment) ?: return
+            moreTabScreens.add(screen)
+        }
+    }
+
     private fun purify(fragment: Any?) {
         if (fragment == null) return
         if (!fragment.javaClass.name.endsWith("MoreTabUI")) return
-        if (!prefs.getBoolean(MoreTabPurifySettings.KEY_ENABLE, MoreTabPurifySettings.DEFAULT_ENABLE)) {
+        if (!enabled()) {
             return
         }
 
         val screen = screenOf(fragment) ?: return
+        moreTabScreens.add(screen)
         val items = preferenceList(screen) ?: return
         if (items.isEmpty()) return
 
