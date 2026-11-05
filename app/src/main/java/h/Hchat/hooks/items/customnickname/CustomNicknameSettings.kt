@@ -43,18 +43,6 @@ object CustomNicknameSettings {
             ?.takeIf { it.isNotEmpty() }
     }
 
-    fun displayName(
-        context: Context,
-        wxid: String?,
-        surface: NicknameSurface,
-        original: String?
-    ): String? {
-        val id = wxid?.trim().orEmpty()
-        if (id.isEmpty()) return original
-        if (!scopeEnabled(context, surface)) return original
-        return nickname(context, id) ?: original
-    }
-
     fun hasNickname(context: Context, wxid: String?): Boolean = nickname(context, wxid) != null
 
     fun setNickname(context: Context, wxid: String, value: String?) {

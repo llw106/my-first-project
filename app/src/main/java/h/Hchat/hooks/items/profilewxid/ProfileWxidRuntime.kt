@@ -13,8 +13,9 @@ import java.lang.reflect.Method
 /**
  * 资料页微信号的显示层替换。
  *
- * 不再依赖 ContactInfoUI 这种会被换名/换 ClassLoader 的界面类，
- * 而是挂在 TextView#setText 上：当文本是已配置好友的真实微信号（或「微信号：xxx」）时换成自定义值。
+ * 挂在 TextView#setText 上：文本里出现已配置好友的真实微信号时换成自定义值。
+ * 支持「微信号：bbb343」「微信号:bbb343」「bbb343」三种形态。
+ * 不写入微信数据，仅本机显示。
  */
 class ProfileWxidRuntime(
     private val context: FeatureContext,
@@ -24,13 +25,12 @@ class ProfileWxidRuntime(
     private val unhooks = ArrayList<XC_MethodHook.Unhook>()
     private var installed = false
 
+    /** 真实微信号 → 自定义显示值 */
     @Volatile
     private var aliasMap: Map<String, String> = emptyMap()
 
     @Volatile
     private var builtAt = 0L
-
-    private var diagCount = 0
 
     fun install() {
         if (installed) return
@@ -38,6 +38,7 @@ class ProfileWxidRuntime(
         installTextViewHook()
     }
 
+    /** 设置页保存后调用，让映射立即重建。 */
     fun refresh() {
         builtAt = 0L
     }
@@ -73,35 +74,27 @@ class ProfileWxidRuntime(
 
     private fun rewrite(param: XC_MethodHook.MethodHookParam) {
         val source = param.args.getOrNull(0) as? CharSequence ?: return
-        val raw = source.toString().trim()
-        if (raw.isEmpty()) return
-        val map = currentMap()
+        val raw = source.toString()
+        if (raw.isBlank()) return
+        currentMap()
+        val map = aliasMap
         if (map.isEmpty()) return
 
-        // 情况一：整段就是「微信号：xxx」/「微信号:xxx」/「微信号 xxx」
-        val labelIndex = raw.indexOf(LABEL)
-        if (labelIndex >= 0) {
+        // 情况一：整段是「微信号：xxx」/「微信号:xxx」
+        if (raw.contains(LABEL)) {
             for ((alias, custom) in map) {
-                if (raw.contains(alias)) {
-                    param.args[0] = raw.replace(alias, custom)
-                    if (diagCount < DIAG_LIMIT) {
-                        diagCount++
-                        log("替换带标签文本 ${raw.take(40)} → ${custom}", null)
-                    }
-                    return
-                }
+                if (alias.isEmpty() || alias == custom) continue
+                if (!raw.contains(alias)) continue
+                param.args[0] = raw.replace(alias, custom)
+                return
             }
             return
         }
 
-        // 情况二：整段就是微信号本身（资料页把标签和值分成两个 TextView）
+        // 情况二：整段就是微信号本身（标签与值分成两个 TextView）
         if (raw.length < MIN_ALIAS_LENGTH) return
         map[raw]?.let { custom ->
             param.args[0] = custom
-            if (diagCount < DIAG_LIMIT) {
-                diagCount++
-                log("替换纯微信号 $raw → $custom", null)
-            }
         }
     }
 
@@ -109,8 +102,8 @@ class ProfileWxidRuntime(
         val now = SystemClock.elapsedRealtime()
         if (now - builtAt < REFRESH_INTERVAL_MS) return aliasMap
         builtAt = now
-        val host = context.hostContext() ?: return aliasMap
-        if (!ProfileWxidSettings.enabled(host)) {
+        val host = context.hostContext()
+        if (host == null || !ProfileWxidSettings.enabled(host)) {
             aliasMap = emptyMap()
             return aliasMap
         }
@@ -130,10 +123,6 @@ class ProfileWxidRuntime(
             }
         }
         aliasMap = map
-        if (diagCount < DIAG_LIMIT) {
-            diagCount++
-            log("微信号映射 ${map.size} 条: ${map.entries.joinToString { "${it.key}→${it.value}" }.take(300)}", null)
-        }
         return aliasMap
     }
 
@@ -156,6 +145,5 @@ class ProfileWxidRuntime(
         private const val LABEL = "微信号"
         private const val REFRESH_INTERVAL_MS = 2000L
         private const val MIN_ALIAS_LENGTH = 4
-        private const val DIAG_LIMIT = 3
     }
 }
