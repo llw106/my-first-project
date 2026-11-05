@@ -84,6 +84,8 @@ public final class WeChatDatabaseListenerApi {
     private final ThreadLocal<Integer> queryDepth = ThreadLocal.withInitial(() -> 0);
     private volatile boolean installed;
     private volatile int hookedMethodCount;
+    /** 上一次安装日志的内容签名，避免调度器重试时刷屏。 */
+    private String lastInstallSignature;
     private volatile Class<?> hookedWrapperClass;
 
     public WeChatDatabaseListenerApi(DexFinder dexFinder, Logger logger) {
@@ -163,12 +165,21 @@ public final class WeChatDatabaseListenerApi {
         if (wrapperClass != null) hookedWrapperClass = wrapperClass;
         hookedMethodCount = hookedMethods.size();
         installed = isOperational();
-        h.Hchat.utils.HLog.e("[Hchat:DatabaseListener]安装 wrapper="
-                + (wrapperClass != null ? wrapperClass.getName() : "null")
-                + " added=" + count + " total=" + hookedMethodCount
-                + " wrapperMutations=" + hookedWrapperMutationMethods.size()
-                + " wrapperInserts=" + hookedWrapperInsertMethods.size()
-                + " operational=" + installed);
+        // 安装会被调度器反复重试；只有结果变化时才输出，且走普通日志（不抓栈）。
+        String signature = (wrapperClass != null ? wrapperClass.getName() : "")
+                + "|" + count + "|" + hookedMethodCount
+                + "|" + hookedWrapperMutationMethods.size()
+                + "|" + hookedWrapperInsertMethods.size()
+                + "|" + installed;
+        if (!signature.equals(lastInstallSignature)) {
+            lastInstallSignature = signature;
+            h.Hchat.utils.HLog.i("[Hchat:DatabaseListener]安装 wrapper="
+                    + (wrapperClass != null ? wrapperClass.getName() : "null")
+                    + " added=" + count + " total=" + hookedMethodCount
+                    + " wrapperMutations=" + hookedWrapperMutationMethods.size()
+                    + " wrapperInserts=" + hookedWrapperInsertMethods.size()
+                    + " operational=" + installed);
+        }
     }
 
     private String operationOf(Method method, boolean allowObfuscatedWrapperMethod) {

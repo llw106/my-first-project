@@ -259,6 +259,8 @@ import h.Hchat.hooks.items.emojisave.EmojiSaveFeature
 import h.Hchat.hooks.items.emojisave.EmojiSaveSettings
 import h.Hchat.hooks.items.fakelocation.FakeLocationFeature
 import h.Hchat.hooks.items.fakelocation.FakeLocationSettings
+import h.Hchat.hooks.items.swipequote.SwipeQuoteFeature
+import h.Hchat.hooks.items.swipequote.SwipeQuoteSettings
 import h.Hchat.hooks.items.wechatstep.WechatStepFeature
 import h.Hchat.hooks.items.wechatstep.WechatStepSettings
 import h.Hchat.hooks.items.fakescancamera.FakeScanCameraFeature
@@ -3696,6 +3698,7 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         SkipGlobalMiniProgramSplashAdsFeature.ID -> listOf("跳过全局小程序开屏广告", "小程序开屏广告", "启动广告", "全局广告")
         FakeLocationFeature.ID -> listOf("虚拟定位", "模拟定位", "小程序定位", "微信地图", "地图选点", "搜索地点", "经纬度", "GPS")
         WechatStepFeature.ID -> listOf("步数", "微信运动", "刷步", "计步", "运动步数")
+        SwipeQuoteFeature.ID -> listOf("滑动手势", "左滑引用", "右滑复读", "长按复读", "引用", "复读")
         GameEmojiFeature.ID -> listOf("指定骰子猜拳", "自定义骰子", "骰子点数", "猜拳结果", "剪刀", "石头", "布", "发送时选择")
         VoiceForwardFeature.ID -> listOf("语音转发", "语音保存", "合并语音", "合并MP3", "转发弹窗", "好友列表", "群聊列表", "语音列表", "批量转发")
         ScheduledTaskFeature.ID -> listOf("定时任务", "定时发送", "群发任务", "计划发送", "循环发送", "每日发送", "每周发送", "朋友圈", "图文", "视文")
@@ -4315,6 +4318,7 @@ private fun FeatureSettingsPage(
         SkipGlobalMiniProgramSplashAdsFeature.ID -> SkipGlobalMiniProgramSplashAdsMiuixPage(context, provider, onBack)
         FakeLocationFeature.ID -> FakeLocationMiuixPage(context, provider, onBack)
         WechatStepFeature.ID -> WechatStepMiuixPage(context, provider, onBack)
+        SwipeQuoteFeature.ID -> SwipeQuoteMiuixPage(context, provider, onBack)
         GameEmojiFeature.ID -> GameEmojiMiuixPage(context, provider, onBack)
         MessageBubbleFeature.ID -> MessageBubbleMiuixPage(context, provider, onBack)
         ChatTimeStyleFeature.ID -> ChatTimeStyleMiuixPage(context, provider, onBack)
@@ -11074,6 +11078,65 @@ private fun SkipGlobalMiniProgramSplashAdsMiuixPage(
                                 it
                             ).apply()
                         }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwipeQuoteMiuixPage(
+    context: Context,
+    provider: FeatureSettingsProvider,
+    onBack: () -> Unit
+) {
+    val sp = remember { HchatStorage.preferences(context, SwipeQuoteSettings.PREFS_NAME) }
+    val listState = rememberLazyListState()
+    val scrollBehavior = MiuixScrollBehavior()
+    PageScaffold(
+        title = provider.title(),
+        largeTitle = provider.title(),
+        scrollBehavior = scrollBehavior,
+        bottomBar = { BottomActionBar("返回", onBack) }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
+            state = listState,
+            contentPadding = PaddingValues(
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 84.dp
+            )
+        ) {
+            item { SmallTitle(text = "滑动手势") }
+            item {
+                SettingsCard {
+                    SwitchRow(
+                        sp,
+                        SwipeQuoteSettings.KEY_ENABLE,
+                        "左滑引用回复",
+                        "左滑消息后调用微信原生引用入口",
+                        SwipeQuoteSettings.DEFAULT_ENABLE
+                    )
+                }
+            }
+            item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "复读") }
+            item {
+                SettingsCard {
+                    SwitchRow(
+                        sp,
+                        SwipeQuoteSettings.KEY_REPEAT_ENABLE,
+                        "右滑复读",
+                        "右滑消息后复读到当前聊天",
+                        SwipeQuoteSettings.DEFAULT_REPEAT_ENABLE
+                    )
+                    InsetDivider()
+                    SwitchRow(
+                        sp,
+                        SwipeQuoteSettings.KEY_REPEAT_MENU_ENABLE,
+                        "长按菜单复读",
+                        "长按消息后点击 +1 复读到当前聊天",
+                        SwipeQuoteSettings.DEFAULT_REPEAT_MENU_ENABLE
                     )
                 }
             }

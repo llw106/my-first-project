@@ -61,6 +61,8 @@ object TextViewRewriteHub {
         val hooked = runCatching {
             HookRegistry.get().hook(method, object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    // setText 极高频，没有订阅者时直接返回，省掉一次迭代器分配。
+                    if (rewriters.isEmpty()) return
                     for (rewriter in rewriters) {
                         runCatching { rewriter.rewrite(param) }
                     }
