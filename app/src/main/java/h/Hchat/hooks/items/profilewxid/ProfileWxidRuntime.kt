@@ -1,22 +1,20 @@
 package h.Hchat.hooks.items.profilewxid
 
-import android.app.Activity
-import android.content.Context
-import android.content.Intent
-import android.view.View
-import android.view.ViewGroup
+import android.os.SystemClock
 import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
+import h.Hchat.hooks.api.core.WeChatApis
 import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.hooks.core.HookRegistry
-import h.Hchat.utils.KavaReflector
+import h.Hchat.utils.HLog
 import java.lang.reflect.Method
-import java.util.ArrayList
 
 /**
- * 好友/群成员资料页的微信号显示层替换。
- * 只改已经渲染出来的 TextView，不动 Preference 数据，也不写微信数据库。
+ * 资料页微信号的显示层替换。
+ *
+ * 不再依赖 ContactInfoUI 这种会被换名/换 ClassLoader 的界面类，
+ * 而是挂在 TextView#setText 上：当文本是已配置好友的真实微信号（或「微信号：xxx」）时换成自定义值。
  */
 class ProfileWxidRuntime(
     private val context: FeatureContext,
@@ -25,204 +23,139 @@ class ProfileWxidRuntime(
 
     private val unhooks = ArrayList<XC_MethodHook.Unhook>()
     private var installed = false
+
+    @Volatile
+    private var aliasMap: Map<String, String> = emptyMap()
+
+    @Volatile
+    private var builtAt = 0L
+
     private var diagCount = 0
 
     fun install() {
         if (installed) return
         installed = true
-        hookProfileActivity()
+        installTextViewHook()
+    }
+
+    fun refresh() {
+        builtAt = 0L
     }
 
     fun destroy() {
         unhooks.forEach { runCatching { it.unhook() } }
         unhooks.clear()
         installed = false
+        aliasMap = emptyMap()
+        builtAt = 0L
     }
 
-    private fun hookProfileActivity() {
-        val loader = context.hostClassLoader()
-        if (loader == null) {
-            log("hostClassLoader 为空", null)
+    private fun installTextViewHook() {
+        val setText = runCatching {
+            TextView::class.java.getDeclaredMethod(
+                "setText",
+                CharSequence::class.java,
+                TextView.BufferType::class.java
+            )
+        }.getOrNull()
+        if (setText == null) {
+            log("未找到 TextView#setText", null)
             return
         }
-        val clazz = KavaReflector.loadClass(CONTACT_INFO_UI, loader)
-        if (clazz == null) {
-            log("未找到 $CONTACT_INFO_UI", null)
-            return
-        }
-        val method = KavaReflector.findMethodRecursive(clazz, "initView")
-        if (method == null) {
-            log("未找到 ${clazz.name}#initView", null)
-            return
-        }
-        hook(method, object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                val activity = param.thisObject as? Activity ?: return
-                if (diagCount < DIAG_LIMIT) {
-                    diagCount++
-                    log("contactInfoUI 命中", null)
-                }
-                runCatching { scheduleApply(activity) }
-                    .onFailure { logger("资料页微信号处理失败", it) }
+        hook(setText, object : XC_MethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                runCatching { rewrite(param) }
+                    .onFailure { logger("替换微信号失败", it) }
             }
         })
-        log("已挂载 ${clazz.name}#initView", null)
+        log("TextView#setText hook 已安装", null)
     }
 
-    private fun hook(method: Method, callback: XC_MethodHook) {
-        runCatching { HookRegistry.get().hook(method, callback) }
-            .onSuccess { unhooks += it }
-            .onFailure { logger("hook ${method.name} 失败", it) }
-    }
+    private fun rewrite(param: XC_MethodHook.MethodHookParam) {
+        val source = param.args.getOrNull(0) as? CharSequence ?: return
+        val raw = source.toString().trim()
+        if (raw.isEmpty()) return
+        val map = currentMap()
+        if (map.isEmpty()) return
 
-    private fun scheduleApply(activity: Activity, attempt: Int = 0) {
-        val decor = activity.window?.decorView as? ViewGroup ?: return
-        decor.postDelayed({
-            if (activity.isFinishing || activity.isDestroyed) return@postDelayed
-            val done = runCatching { applyNow(activity) }
-                .onFailure { logger("重写微信号失败", it) }
-                .getOrDefault(false)
-            if (!done && attempt < MAX_ATTEMPTS) {
-                scheduleApply(activity, attempt + 1)
+        // 情况一：整段就是「微信号：xxx」/「微信号:xxx」/「微信号 xxx」
+        val labelIndex = raw.indexOf(LABEL)
+        if (labelIndex >= 0) {
+            for ((alias, custom) in map) {
+                if (raw.contains(alias)) {
+                    param.args[0] = raw.replace(alias, custom)
+                    if (diagCount < DIAG_LIMIT) {
+                        diagCount++
+                        log("替换带标签文本 ${raw.take(40)} → ${custom}", null)
+                    }
+                    return
+                }
             }
-        }, if (attempt == 0) 0L else RETRY_DELAY_MS)
-    }
-
-    /** @return true 表示已经处理完毕（成功改写或无需处理），false 表示页面还没渲染出来。 */
-    private fun applyNow(activity: Activity): Boolean {
-        val host = activity.applicationContext ?: return true
-        if (!ProfileWxidSettings.enabled(host)) {
-            log("未启用自定义微信号", null)
-            return true
-        }
-        val decor = activity.window?.decorView as? ViewGroup ?: return true
-        val wxid = resolveWxid(activity)
-        val custom = ProfileWxidSettings.custom(host, wxid)
-        if (custom == null) {
-            log("没有配置 wxid=$wxid", null)
-            return true
-        }
-        log("开始处理 wxid=$wxid custom=$custom", null)
-
-        val textViews = ArrayList<TextView>()
-        collectTextViews(decor, textViews)
-        val labels = textViews.filter { isWxidLabel(it.text?.toString()) }
-        if (labels.isEmpty()) {
-            log(
-                "未匹配到微信号文本，wxid=$wxid，TextView=${textViews.size} 文本=" +
-                    dumpTexts(textViews),
-                null
-            )
-            return false
-        }
-        labels.forEach { label ->
-            runCatching { rewrite(label, custom) }
-                .onFailure { logger("改写微信微信号 TextView 失败", it) }
-        }
-        log("已处理微信号，wxid=$wxid custom=$custom", null)
-        return true
-    }
-
-    private fun rewrite(label: TextView, custom: String) {
-        val raw = label.text?.toString()?.trim().orEmpty()
-        val row = findRow(label)
-        if (raw.length > LABEL_LENGTH) {
-            // 一个 TextView 里就是「微信号：xxx」，直接替换冒号后的内容。
-            label.text = "$LABEL：$custom"
             return
         }
-        val sibling = findSiblingValue(row, label)
-        if (sibling != null) {
-            sibling.text = custom
-        } else {
-            label.text = "$LABEL：$custom"
-        }
-    }
 
-    private fun dumpTexts(views: List<TextView>): String {
-        val text = views.mapNotNull { view ->
-            view.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
-        }.joinToString(" | ")
-        return text.take(900)
-    }
-
-    private fun isWxidLabel(text: String?): Boolean {
-        val value = text?.trim().orEmpty()
-        if (value.length < LABEL_LENGTH || !value.startsWith(LABEL)) return false
-        if (value.length == LABEL_LENGTH) return true
-        val next = value[LABEL_LENGTH]
-        return next == '：' || next == ':' || next == ' '
-    }
-
-    private fun findRow(view: View): ViewGroup? {
-        var current = view.parent
-        var depth = 0
-        var best: ViewGroup? = null
-        while (current is ViewGroup && depth < MAX_ROW_DEPTH) {
-            if (current.childCount >= 2 && current.width > 0) best = current
-            if (current.id == android.R.id.content) break
-            current = current.parent
-            depth++
-        }
-        return best
-    }
-
-    private fun findSiblingValue(row: ViewGroup?, label: TextView): TextView? {
-        if (row == null) return null
-        val views = ArrayList<TextView>()
-        collectTextViews(row, views)
-        return views.firstOrNull { candidate ->
-            candidate !== label && candidate.text?.toString()?.trim().orEmpty().isNotEmpty()
-        }
-    }
-
-    private fun collectTextViews(root: ViewGroup, out: MutableList<TextView>) {
-        for (index in 0 until root.childCount) {
-            val child = root.getChildAt(index)
-            when (child) {
-                is TextView -> if (child.visibility == View.VISIBLE) out += child
-                is ViewGroup -> collectTextViews(child, out)
+        // 情况二：整段就是微信号本身（资料页把标签和值分成两个 TextView）
+        if (raw.length < MIN_ALIAS_LENGTH) return
+        map[raw]?.let { custom ->
+            param.args[0] = custom
+            if (diagCount < DIAG_LIMIT) {
+                diagCount++
+                log("替换纯微信号 $raw → $custom", null)
             }
         }
     }
 
-    private fun resolveWxid(activity: Activity): String? {
-        val intent: Intent = activity.intent ?: return null
-        val direct = listOf(
-            intent.getStringExtra("Contact_User"),
-            intent.getStringExtra("Contact_Username")
-        ).firstOrNull { !it.isNullOrBlank() }?.trim()
-        if (!direct.isNullOrBlank()) return direct
-        val extras = intent.extras ?: return null
-        return extras.keySet()
-            .mapNotNull { key ->
-                runCatching { extras.get(key) as? String }.getOrNull()?.trim()
+    private fun currentMap(): Map<String, String> {
+        val now = SystemClock.elapsedRealtime()
+        if (now - builtAt < REFRESH_INTERVAL_MS) return aliasMap
+        builtAt = now
+        val host = context.hostContext() ?: return aliasMap
+        if (!ProfileWxidSettings.enabled(host)) {
+            aliasMap = emptyMap()
+            return aliasMap
+        }
+        val contacts = WeChatApis.contacts()
+        if (contacts == null) {
+            aliasMap = emptyMap()
+            return aliasMap
+        }
+        val map = LinkedHashMap<String, String>()
+        ProfileWxidSettings.configured(host).forEach { (wxid, custom) ->
+            val alias = runCatching { contacts.getContact(wxid)?.customWxId }
+                .getOrNull()
+                ?.trim()
+                .orEmpty()
+            if (alias.isNotEmpty() && alias != custom) {
+                map[alias] = custom
             }
-            .firstOrNull { value ->
-                value.isNotEmpty() &&
-                    !value.endsWith("@chatroom") &&
-                    !value.contains("@") &&
-                    !value.contains(" ") &&
-                    value.length in 5..32
-            }
+        }
+        aliasMap = map
+        if (diagCount < DIAG_LIMIT) {
+            diagCount++
+            log("微信号映射 ${map.size} 条: ${map.entries.joinToString { "${it.key}→${it.value}" }.take(300)}", null)
+        }
+        return aliasMap
+    }
+
+    private fun hook(member: Method, callback: XC_MethodHook) {
+        runCatching { HookRegistry.get().hook(member, callback) }
+            .onSuccess { unhooks += it }
+            .onFailure { logger("安装 hook 失败: ${member.name}", it) }
     }
 
     private fun log(message: String, throwable: Throwable?) {
         if (throwable == null) {
             XposedBridge.log("$TAG $message")
         } else {
-            logger(message, throwable)
+            HLog.e("$TAG $message", throwable)
         }
     }
 
-    companion object {
+    private companion object {
         private const val TAG = "[Hchat:ProfileWxid]"
-        private const val CONTACT_INFO_UI = "com.tencent.mm.plugin.profile.ui.ContactInfoUI"
         private const val LABEL = "微信号"
-        private const val LABEL_LENGTH = 3
-        private const val MAX_ATTEMPTS = 4
-        private const val RETRY_DELAY_MS = 150L
-        private const val MAX_ROW_DEPTH = 5
-        private const val DIAG_LIMIT = 5
+        private const val REFRESH_INTERVAL_MS = 2000L
+        private const val MIN_ALIAS_LENGTH = 4
+        private const val DIAG_LIMIT = 3
     }
 }
