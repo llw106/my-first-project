@@ -1,28 +1,24 @@
 package h.Hchat.hooks.items.profilewxid
 
 import android.os.SystemClock
-import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import h.Hchat.hooks.api.core.WeChatApis
 import h.Hchat.hooks.core.FeatureContext
-import h.Hchat.hooks.core.HookRegistry
+import h.Hchat.hooks.core.TextViewRewriteHub
 import h.Hchat.utils.HLog
-import java.lang.reflect.Method
 
 /**
  * 资料页微信号的显示层替换。
  *
- * 挂在 TextView#setText 上：文本里出现已配置好友的真实微信号时换成自定义值。
- * 支持「微信号：bbb343」「微信号:bbb343」「bbb343」三种形态。
- * 不写入微信数据，仅本机显示。
+ * 复用 TextViewRewriteHub 的 setText 分发，不额外装 hook；
+ * 没有配置时在 toString() 之前返回，零分配。
  */
 class ProfileWxidRuntime(
     private val context: FeatureContext,
     private val logger: (String, Throwable?) -> Unit
-) {
+) : TextViewRewriteHub.Rewriter {
 
-    private val unhooks = ArrayList<XC_MethodHook.Unhook>()
     private var installed = false
 
     /** 真实微信号 → 自定义显示值 */
@@ -35,7 +31,8 @@ class ProfileWxidRuntime(
     fun install() {
         if (installed) return
         installed = true
-        installTextViewHook()
+        val active = TextViewRewriteHub.register(this)
+        log(if (active) "文本改写已注册" else "非界面进程，跳过文本改写", null)
     }
 
     /** 设置页保存后调用，让映射立即重建。 */
@@ -44,41 +41,20 @@ class ProfileWxidRuntime(
     }
 
     fun destroy() {
-        unhooks.forEach { runCatching { it.unhook() } }
-        unhooks.clear()
+        TextViewRewriteHub.unregister(this)
         installed = false
         aliasMap = emptyMap()
         builtAt = 0L
     }
 
-    private fun installTextViewHook() {
-        val setText = runCatching {
-            TextView::class.java.getDeclaredMethod(
-                "setText",
-                CharSequence::class.java,
-                TextView.BufferType::class.java
-            )
-        }.getOrNull()
-        if (setText == null) {
-            log("未找到 TextView#setText", null)
-            return
-        }
-        hook(setText, object : XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                runCatching { rewrite(param) }
-                    .onFailure { logger("替换微信号失败", it) }
-            }
-        })
-        log("TextView#setText hook 已安装", null)
-    }
+    override fun rewrite(param: XC_MethodHook.MethodHookParam) {
+        refreshIfNeeded()
+        val map = aliasMap
+        if (map.isEmpty()) return
 
-    private fun rewrite(param: XC_MethodHook.MethodHookParam) {
         val source = param.args.getOrNull(0) as? CharSequence ?: return
         val raw = source.toString()
         if (raw.isBlank()) return
-        currentMap()
-        val map = aliasMap
-        if (map.isEmpty()) return
 
         // 情况一：整段是「微信号：xxx」/「微信号:xxx」
         if (raw.contains(LABEL)) {
@@ -98,19 +74,24 @@ class ProfileWxidRuntime(
         }
     }
 
-    private fun currentMap(): Map<String, String> {
+    private fun refreshIfNeeded() {
         val now = SystemClock.elapsedRealtime()
-        if (now - builtAt < REFRESH_INTERVAL_MS) return aliasMap
+        if (now - builtAt < REFRESH_INTERVAL_MS) return
         builtAt = now
+        runCatching { build() }
+            .onFailure { logger("重建微信号映射失败", it) }
+    }
+
+    private fun build() {
         val host = context.hostContext()
         if (host == null || !ProfileWxidSettings.enabled(host)) {
             aliasMap = emptyMap()
-            return aliasMap
+            return
         }
         val contacts = WeChatApis.contacts()
         if (contacts == null) {
             aliasMap = emptyMap()
-            return aliasMap
+            return
         }
         val map = LinkedHashMap<String, String>()
         ProfileWxidSettings.configured(host).forEach { (wxid, custom) ->
@@ -123,13 +104,6 @@ class ProfileWxidRuntime(
             }
         }
         aliasMap = map
-        return aliasMap
-    }
-
-    private fun hook(member: Method, callback: XC_MethodHook) {
-        runCatching { HookRegistry.get().hook(member, callback) }
-            .onSuccess { unhooks += it }
-            .onFailure { logger("安装 hook 失败: ${member.name}", it) }
     }
 
     private fun log(message: String, throwable: Throwable?) {

@@ -9,13 +9,13 @@ import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.view.View
-import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
 import h.Hchat.dexkit.DexMethodCache
 import h.Hchat.hooks.api.core.WeChatApis
 import h.Hchat.hooks.core.DexInstallScheduler
 import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.hooks.core.HookRegistry
+import h.Hchat.hooks.core.TextViewRewriteHub
 import h.Hchat.preferences.HchatStorage
 import h.Hchat.utils.KavaReflector
 import org.luckypray.dexkit.query.FindMethod
@@ -24,6 +24,7 @@ import java.lang.reflect.Method
 
 object GroupLeaveMonitorHighlighter {
     @Volatile private var textCleanupInstalled = false
+    @Volatile private var highlightContext: Context? = null
     @Volatile private var uriClickInstalled = false
 
     fun install(context: FeatureContext, logger: (String, Throwable?) -> Unit): Boolean {
@@ -49,30 +50,19 @@ object GroupLeaveMonitorHighlighter {
 
     private fun installTextCleanup(context: Context, logger: (String, Throwable?) -> Unit): Boolean {
         if (textCleanupInstalled) return true
-        val method = KavaReflector.findDeclaredMethod(
-            TextView::class.java,
-            "setText",
-            CharSequence::class.java,
-            TextView.BufferType::class.java
-        )
-        if (method == null) {
-            logger("退群监控 wxid 高亮 Hook 未找到", null)
-            return false
-        }
-        return runCatching {
-            HookRegistry.get().hook(method, object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    val original = param.args?.getOrNull(0) as? CharSequence ?: return
-                    val highlighted = highlight(context, original) ?: return
-                    param.args[0] = highlighted
-                }
-            })
-            textCleanupInstalled = true
-            true
-        }.getOrElse {
-            logger("退群监控 wxid 高亮 Hook 安装失败", it)
-            false
-        }
+        highlightContext = context
+        val active = TextViewRewriteHub.register(highlightRewriter)
+        textCleanupInstalled = active
+        if (!active) logger("退群监控高亮未启用（非界面进程）", null)
+        return active
+    }
+
+    /** 复用全局 setText 分发，避免再装一份 hook。 */
+    private val highlightRewriter = TextViewRewriteHub.Rewriter { param ->
+        val context = highlightContext ?: return@Rewriter
+        val original = param.args?.getOrNull(0) as? CharSequence ?: return@Rewriter
+        val highlighted = highlight(context, original) ?: return@Rewriter
+        param.args[0] = highlighted
     }
 
     private fun highlight(
@@ -80,7 +70,11 @@ object GroupLeaveMonitorHighlighter {
         original: CharSequence
     ): CharSequence? {
         val raw = original.toString()
-        val normalized = normalizeLegacyTemplateXml(raw)
+        // 绝大多数文本与退群提示无关，先用最廉价的判断挡掉，避免每次都做 XML 解析
+        val hasTemplate = raw.contains("<_wc_custom_link_", ignoreCase = true) ||
+            raw.contains("<sysmsg", ignoreCase = true)
+        if (!hasTemplate && raw.lastIndexOf(LEAVE_SUFFIX_TEXT) < 0) return null
+        val normalized = if (hasTemplate) normalizeLegacyTemplateXml(raw) else null
         if (normalized == null &&
             (raw.contains("<_wc_custom_link_", ignoreCase = true) || raw.contains("<sysmsg", ignoreCase = true))
         ) {

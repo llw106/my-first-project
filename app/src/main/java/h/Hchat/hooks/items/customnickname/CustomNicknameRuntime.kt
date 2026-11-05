@@ -1,30 +1,24 @@
 package h.Hchat.hooks.items.customnickname
 
 import android.os.SystemClock
-import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import h.Hchat.hooks.api.core.WeChatApis
 import h.Hchat.hooks.core.FeatureContext
-import h.Hchat.hooks.core.HookRegistry
+import h.Hchat.hooks.core.TextViewRewriteHub
 import h.Hchat.utils.HLog
-import java.lang.reflect.Method
 
 /**
  * 只改显示层：把界面上出现的「原显示名 / 原昵称」换成自定义昵称。
  *
- * 不依赖任何微信内部类名，挂在 android.widget.TextView#setText 上做文本替换。
- * 支持三种形态：
- *  1) 整段等于显示名（会话列表标题）：杨善邦 (某某年) → 明年
- *  2) 带标签文本（资料页）：昵称：某某年 → 昵称：明年
- *  3) 显示名嵌在更长文本里（会话摘要等）
+ * 文本改写统一走 TextViewRewriteHub（全模块共用一个 setText hook），
+ * 无配置时在 toString() 之前就返回，不产生额外对象。
  */
 class CustomNicknameRuntime(
     private val context: FeatureContext,
     private val logger: (String, Throwable?) -> Unit
-) {
+) : TextViewRewriteHub.Rewriter {
 
-    private val unhooks = ArrayList<XC_MethodHook.Unhook>()
     private var installed = false
 
     /** 整段可替换的键：显示名 / 昵称 / 备注 */
@@ -45,7 +39,8 @@ class CustomNicknameRuntime(
     fun install() {
         if (installed) return
         installed = true
-        installTextViewHook()
+        val active = TextViewRewriteHub.register(this)
+        log(if (active) "文本改写已注册" else "非界面进程，跳过文本改写", null)
     }
 
     /** 设置页保存后调用，让映射立即重建。 */
@@ -54,44 +49,21 @@ class CustomNicknameRuntime(
     }
 
     fun destroy() {
-        unhooks.forEach { runCatching { it.unhook() } }
-        unhooks.clear()
+        TextViewRewriteHub.unregister(this)
         installed = false
         clear()
         builtAt = 0L
     }
 
-    private fun installTextViewHook() {
-        val setText = runCatching {
-            TextView::class.java.getDeclaredMethod(
-                "setText",
-                CharSequence::class.java,
-                TextView.BufferType::class.java
-            )
-        }.getOrNull()
-        if (setText == null) {
-            log("未找到 TextView#setText", null)
-            return
-        }
-        hook(setText, object : XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                runCatching { rewrite(param) }
-                    .onFailure { logger("替换自定义昵称失败", it) }
-            }
-        })
-        log("TextView#setText hook 已安装", null)
-    }
+    override fun rewrite(param: XC_MethodHook.MethodHookParam) {
+        refreshIfNeeded()
+        if (exactMap.isEmpty() && tokenList.isEmpty()) return
 
-    private fun rewrite(param: XC_MethodHook.MethodHookParam) {
         val source = param.args.getOrNull(0) as? CharSequence ?: return
         val raw = source.toString()
         if (raw.isBlank()) return
-        currentMap()
-        val exact = exactMap
-        val tokens = tokenList
-        if (exact.isEmpty() && tokens.isEmpty()) return
 
-        exact[raw]?.let { custom ->
+        exactMap[raw]?.let { custom ->
             param.args[0] = custom
             return
         }
@@ -102,7 +74,7 @@ class CustomNicknameRuntime(
         }
 
         if (raw.contains(LABEL)) {
-            for ((token, custom) in tokens) {
+            for ((token, custom) in tokenList) {
                 if (token.isEmpty() || token == custom) continue
                 if (!raw.contains(token)) continue
                 param.args[0] = raw.replace(token, custom)
@@ -111,7 +83,7 @@ class CustomNicknameRuntime(
             return
         }
 
-        for ((name, custom) in exact) {
+        for ((name, custom) in exactMap) {
             if (name.length < MIN_NAME_LENGTH) continue
             if (raw.length <= name.length) continue
             if (raw.length > name.length + MAX_EXTRA) continue
@@ -121,23 +93,28 @@ class CustomNicknameRuntime(
         }
     }
 
-    private fun currentMap(): Map<String, String> {
+    private fun refreshIfNeeded() {
         val now = SystemClock.elapsedRealtime()
-        if (now - builtAt < REFRESH_INTERVAL_MS) return exactMap
+        if (now - builtAt < REFRESH_INTERVAL_MS) return
         builtAt = now
+        runCatching { build() }
+            .onFailure { logger("重建昵称映射失败", it) }
+    }
+
+    private fun build() {
         val host = context.hostContext()
         if (host == null) {
             clear()
-            return exactMap
+            return
         }
         if (!CustomNicknameSettings.enabled(host) || !anyScopeEnabled(host)) {
             clear()
-            return exactMap
+            return
         }
         val contacts = WeChatApis.contacts()
         if (contacts == null) {
             clear()
-            return exactMap
+            return
         }
         val exact = LinkedHashMap<String, String>()
         val tokens = ArrayList<Pair<String, String>>()
@@ -167,7 +144,6 @@ class CustomNicknameRuntime(
         exactMap = exact
         tokenList = tokens
         normMap = norm
-        return exactMap
     }
 
     private fun clear() {
@@ -186,12 +162,6 @@ class CustomNicknameRuntime(
 
     private fun normalize(text: String): String =
         text.replace(" ", "").replace("\u3000", "").replace("（", "(").replace("）", ")").trim()
-
-    private fun hook(member: Method, callback: XC_MethodHook) {
-        runCatching { HookRegistry.get().hook(member, callback) }
-            .onSuccess { unhooks += it }
-            .onFailure { logger("安装 hook 失败: ${member.name}", it) }
-    }
 
     private fun log(message: String, throwable: Throwable?) {
         if (throwable == null) {
