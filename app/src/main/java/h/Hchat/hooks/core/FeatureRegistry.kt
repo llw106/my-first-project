@@ -11,6 +11,7 @@ import h.Hchat.hooks.items.chattime.ChatTimeStyleFeature
 import h.Hchat.hooks.items.conversationgroup.ConversationGroupFeature
 import h.Hchat.hooks.items.custombottombar.CustomBottomBarFeature
 import h.Hchat.hooks.items.customfriendavatar.CustomFriendAvatarFeature
+import h.Hchat.hooks.items.customnickname.CustomNicknameFeature
 import h.Hchat.hooks.items.customnotify.CustomNotificationFeature
 import h.Hchat.hooks.items.editmsg.EditMessageFeature
 import h.Hchat.hooks.items.emojisave.EmojiSaveFeature
@@ -51,6 +52,7 @@ import h.Hchat.hooks.items.payment.transfer.AutoTransferFeature
 import h.Hchat.hooks.items.patblock.PatBlockFeature
 import h.Hchat.hooks.items.protobuf.ProtobufPacketFeature
 import h.Hchat.hooks.items.profileid.ProfileIdFeature
+import h.Hchat.hooks.items.profilewxid.ProfileWxidFeature
 import h.Hchat.hooks.items.quickcontactedit.QuickContactEditFeature
 import h.Hchat.hooks.items.quickmoments.QuickMomentsFeature
 import h.Hchat.hooks.items.quickread.QuickMarkReadFeature
@@ -84,6 +86,8 @@ object FeatureRegistry {
             .register(CustomBottomBarFeature())
             .register(RoundAvatarFeature())
             .register(CustomFriendAvatarFeature())
+            .register(CustomNicknameFeature())
+            .register(ProfileWxidFeature())
             .register(MemberTitleFeature())
             .register(AutoRedPacketFeature())
             .register(WeChatTabletFeature())
