@@ -1,3 +1,4 @@
+// 构建触发标记
 package h.Hchat.hooks.items.moretabpurify
 
 import android.content.SharedPreferences
