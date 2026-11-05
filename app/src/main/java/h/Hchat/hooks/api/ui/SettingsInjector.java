@@ -61,7 +61,6 @@ public class SettingsInjector {
     // 必须使用 Hchat 独有值，避免和 WeKitFork 等同源模块的伪资源 ID 串台。
     private static final int HCHAT_SETTING_ITEM_NAME_RES_ID = -1212373076;
     private static final String SETTING_ITEM_ID = "SettingGroup_Main_More_Hchat";
-    private static final String MORE_GROUP_ID = "SettingGroup_Main_More";
     private static final String MORE_GROUP_CLASS =
             "com.tencent.mm.plugin.setting.ui.setting_new.settings.SettingGroupMore";
     private static final String MORE_FRONT_CLASS =
@@ -468,8 +467,7 @@ public class SettingsInjector {
                             Map<Object, Object> patched = new LinkedHashMap<>();
                             patched.putAll((Map<?, ?>) map);
 
-                            if (hasBaseSettingItemValue(map)
-                                    && (!targetMore || mapHasTargetPage(map, groupSettingItemClass))) {
+                            if (hasBaseSettingItemValue(map)) {
                                 Object activity = param.args != null && param.args.length > 0 ? param.args[0] : null;
                                 if (activity == null) return;
                                 Object item = KavaReflector.newInstance(finalProxyConstructor, activity);
@@ -630,19 +628,6 @@ public class SettingsInjector {
             }
         }
         return null;
-    }
-
-    private boolean mapHasTargetPage(Map<?, ?> map, Class<?> pageClass) {
-        if (map == null) return false;
-        if (pageClass != null && map.containsKey(pageClass)) return true;
-        String pageName = pageClass == null ? "" : pageClass.getName();
-        for (Object key : map.keySet()) {
-            if (key == null) continue;
-            if (key instanceof Class<?> && pageName.equals(((Class<?>) key).getName())) return true;
-            String text = String.valueOf(key);
-            if (text.equals(MORE_GROUP_ID) || text.equals(pageName)) return true;
-        }
-        return false;
     }
 
     private Object findSettingsPageKey(Map<?, ?> map, Class<?> pageClass, Class<?>... knownItemClasses) {
