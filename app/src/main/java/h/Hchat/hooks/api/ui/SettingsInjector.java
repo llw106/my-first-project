@@ -60,7 +60,12 @@ public class SettingsInjector {
     // 新版 SettingItem 的 nameResId，用 Context.getString 拦截时判断。
     // 必须使用 Hchat 独有值，避免和 WeKitFork 等同源模块的伪资源 ID 串台。
     private static final int HCHAT_SETTING_ITEM_NAME_RES_ID = -1212373076;
-    private static final String SETTING_ITEM_ID = "SettingGroup_Main_Other_Hchat";
+    private static final String SETTING_ITEM_ID = "SettingGroup_Main_More_Hchat";
+    private static final String MORE_GROUP_ID = "SettingGroup_Main_More";
+    private static final String MORE_GROUP_CLASS =
+            "com.tencent.mm.plugin.setting.ui.setting_new.settings.SettingGroupMore";
+    private static final String MORE_FRONT_CLASS =
+            "com.tencent.mm.plugin.setting.ui.setting_new.settings.more.SettingGroupCareModeItem";
     private static final int HCHAT_PLUS_MENU_ID = -1212373075;
     private static final int HCHAT_PLUS_LONG_PRESS_TAG = -1212373074;
     private static final int QUICK_READ_PLUS_MENU_ID = -1212373073;
@@ -260,12 +265,16 @@ public class SettingsInjector {
         }
 
         try {
-            // 需要的组类
-            Class<?> groupSettingItemClass = dex.settingGroupMainClass;
-            Class<?> parentSettingItemClass = dex.settingAdditionHeaderSearchClass;
+            // 入口挂到「设置 → 更多」页：组类用 SettingGroupMore，前置项用关怀模式项
+            Class<?> moreGroupClass = KavaReflector.loadClass(MORE_GROUP_CLASS, classLoader);
+            Class<?> moreFrontClass = KavaReflector.loadClass(MORE_FRONT_CLASS, classLoader);
+            boolean targetMore = moreGroupClass != null && moreFrontClass != null;
+            Class<?> groupSettingItemClass = targetMore ? moreGroupClass : dex.settingGroupMainClass;
+            Class<?> parentSettingItemClass = targetMore ? moreFrontClass : dex.settingAdditionHeaderSearchClass;
             Class<?> childSettingItemClass = dex.settingGroupPersonalInfoClass;
-            if (parentSettingItemClass == null || childSettingItemClass == null) {
-                logDetail("[Modern] SettingAdditionHeaderSearch 或 SettingGroupPersonalInfo 不存在，跳过");
+            logDetail("[Modern] 入口位置: " + (targetMore ? "更多页" : "主设置页"));
+            if (parentSettingItemClass == null || (!targetMore && childSettingItemClass == null)) {
+                logDetail("[Modern] 设置页组类缺失，跳过");
                 return;
             }
 
@@ -414,7 +423,7 @@ public class SettingsInjector {
 
             // === Step 3: hook SettingGroupPersonalInfo 返回 SettingLocation ===
             // 找到返回 SettingLocation 的方法
-            for (Method m : KavaReflector.declaredMethods(childSettingItemClass)) {
+            for (Method m : KavaReflector.declaredMethods(targetMore ? null : childSettingItemClass)) {
                 if (m.getReturnType() == dex.settingLocationClass) {
                     HookRegistry.get().hook(m, new XC_MethodHook(
                             de.robv.android.xposed.callbacks.XCallback.PRIORITY_HIGHEST) {
@@ -459,7 +468,8 @@ public class SettingsInjector {
                             Map<Object, Object> patched = new LinkedHashMap<>();
                             patched.putAll((Map<?, ?>) map);
 
-                            if (hasBaseSettingItemValue(map)) {
+                            if (hasBaseSettingItemValue(map)
+                                    && (!targetMore || mapHasTargetPage(map, groupSettingItemClass))) {
                                 Object activity = param.args != null && param.args.length > 0 ? param.args[0] : null;
                                 if (activity == null) return;
                                 Object item = KavaReflector.newInstance(finalProxyConstructor, activity);
@@ -469,11 +479,13 @@ public class SettingsInjector {
                                 return;
                             }
 
-                            Object pageKey = findSettingsPageKey(
-                                    map,
-                                    groupSettingItemClass,
-                                    parentSettingItemClass,
-                                    childSettingItemClass);
+                            Object pageKey = targetMore
+                                    ? findSettingsPageKey(map, groupSettingItemClass, parentSettingItemClass)
+                                    : findSettingsPageKey(
+                                            map,
+                                            groupSettingItemClass,
+                                            parentSettingItemClass,
+                                            childSettingItemClass);
                             if (pageKey == null) {
                                 logDetail("[Modern] 主设置页集合未找到，跳过 Provider 注入");
                                 return;
@@ -618,6 +630,19 @@ public class SettingsInjector {
             }
         }
         return null;
+    }
+
+    private boolean mapHasTargetPage(Map<?, ?> map, Class<?> pageClass) {
+        if (map == null) return false;
+        if (pageClass != null && map.containsKey(pageClass)) return true;
+        String pageName = pageClass == null ? "" : pageClass.getName();
+        for (Object key : map.keySet()) {
+            if (key == null) continue;
+            if (key instanceof Class<?> && pageName.equals(((Class<?>) key).getName())) return true;
+            String text = String.valueOf(key);
+            if (text.equals(MORE_GROUP_ID) || text.equals(pageName)) return true;
+        }
+        return false;
     }
 
     private Object findSettingsPageKey(Map<?, ?> map, Class<?> pageClass, Class<?>... knownItemClasses) {
