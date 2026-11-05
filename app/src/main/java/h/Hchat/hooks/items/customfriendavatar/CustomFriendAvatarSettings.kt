@@ -18,6 +18,7 @@ object CustomFriendAvatarSettings {
     const val KEY_MOMENTS_NOTIFICATIONS = "scope_moments_notifications"
     const val KEY_CONVERSATION_MENU = "conversation_menu"
     const val KEY_CONFIGURED_FRIENDS = "configured_friends"
+    const val KEY_SELECTED = "selected_wxid"
 
     const val DEFAULT_ENABLE = false
     const val DEFAULT_SCOPE = true
@@ -54,6 +55,17 @@ object CustomFriendAvatarSettings {
 
     fun conversationMenuEnabled(context: Context): Boolean {
         return enabled(context) && preferences(context).getBoolean(KEY_CONVERSATION_MENU, DEFAULT_MENU)
+    }
+
+    /** 记住上次选中的好友/群聊，重新进入页面时自动带回。 */
+    fun selected(context: Context): String? =
+        preferences(context).getString(KEY_SELECTED, null)?.trim()?.takeIf { it.isNotEmpty() }
+
+    fun setSelected(context: Context, wxid: String?) {
+        val id = wxid?.trim().orEmpty()
+        preferences(context).edit().apply {
+            if (id.isEmpty()) remove(KEY_SELECTED) else putString(KEY_SELECTED, id)
+        }.apply()
     }
 
     internal fun preferences(context: Context) = HchatStorage.preferences(context, PREFS_NAME)

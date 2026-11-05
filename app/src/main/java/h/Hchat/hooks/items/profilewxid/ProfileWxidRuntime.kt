@@ -25,6 +25,7 @@ class ProfileWxidRuntime(
 
     private val unhooks = ArrayList<XC_MethodHook.Unhook>()
     private var installed = false
+    private var diagCount = 0
 
     fun install() {
         if (installed) return
@@ -57,6 +58,10 @@ class ProfileWxidRuntime(
         hook(method, object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 val activity = param.thisObject as? Activity ?: return
+                if (diagCount < DIAG_LIMIT) {
+                    diagCount++
+                    log("contactInfoUI 命中", null)
+                }
                 runCatching { scheduleApply(activity) }
                     .onFailure { logger("资料页微信号处理失败", it) }
             }
@@ -86,15 +91,30 @@ class ProfileWxidRuntime(
     /** @return true 表示已经处理完毕（成功改写或无需处理），false 表示页面还没渲染出来。 */
     private fun applyNow(activity: Activity): Boolean {
         val host = activity.applicationContext ?: return true
-        if (!ProfileWxidSettings.enabled(host)) return true
+        if (!ProfileWxidSettings.enabled(host)) {
+            log("未启用自定义微信号", null)
+            return true
+        }
         val decor = activity.window?.decorView as? ViewGroup ?: return true
         val wxid = resolveWxid(activity)
-        val custom = ProfileWxidSettings.custom(host, wxid) ?: return true
+        val custom = ProfileWxidSettings.custom(host, wxid)
+        if (custom == null) {
+            log("没有配置 wxid=$wxid", null)
+            return true
+        }
+        log("开始处理 wxid=$wxid custom=$custom", null)
 
         val textViews = ArrayList<TextView>()
         collectTextViews(decor, textViews)
         val labels = textViews.filter { isWxidLabel(it.text?.toString()) }
-        if (labels.isEmpty()) return false
+        if (labels.isEmpty()) {
+            log(
+                "未匹配到微信号文本，wxid=$wxid，TextView=${textViews.size} 文本=" +
+                    dumpTexts(textViews),
+                null
+            )
+            return false
+        }
         labels.forEach { label ->
             runCatching { rewrite(label, custom) }
                 .onFailure { logger("改写微信微信号 TextView 失败", it) }
@@ -117,6 +137,13 @@ class ProfileWxidRuntime(
         } else {
             label.text = "$LABEL：$custom"
         }
+    }
+
+    private fun dumpTexts(views: List<TextView>): String {
+        val text = views.mapNotNull { view ->
+            view.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        }.joinToString(" | ")
+        return text.take(900)
     }
 
     private fun isWxidLabel(text: String?): Boolean {
@@ -196,5 +223,6 @@ class ProfileWxidRuntime(
         private const val MAX_ATTEMPTS = 4
         private const val RETRY_DELAY_MS = 150L
         private const val MAX_ROW_DEPTH = 5
+        private const val DIAG_LIMIT = 5
     }
 }

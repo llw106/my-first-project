@@ -11890,7 +11890,10 @@ private fun CustomFriendAvatarMiuixPage(
         mutableStateOf(sp.getBoolean(CustomFriendAvatarSettings.KEY_ENABLE, CustomFriendAvatarSettings.DEFAULT_ENABLE))
     }
     var route by remember { mutableStateOf(CustomFriendAvatarRoute.MAIN) }
-    var selectedWxid by remember { mutableStateOf("") }
+    // 选中的人保存在配置里，退出页面后再进来仍然生效
+    var selectedWxid by remember {
+        mutableStateOf(CustomFriendAvatarSettings.selected(context).orEmpty())
+    }
     var contacts by remember { mutableStateOf(emptyList<ContactOption>()) }
     var revision by remember { mutableStateOf(0) }
     val nickSp = remember { HchatStorage.preferences(context, CustomNicknameSettings.PREFS_NAME) }
@@ -11917,7 +11920,13 @@ private fun CustomFriendAvatarMiuixPage(
         when (current) {
             CustomFriendAvatarRoute.MAIN -> {
                 val selected = contacts.firstOrNull { it.id == selectedWxid }
-                val configuredIds = remember(revision) { CustomFriendAvatarStore.configuredFriends(context) }
+                val configuredIds = remember(revision) {
+                    val ids = LinkedHashSet<String>()
+                    ids += CustomFriendAvatarStore.configuredFriends(context)
+                    ids += CustomNicknameSettings.configured(context).map { it.first }
+                    ids += ProfileWxidSettings.configured(context).map { it.first }
+                    ids.toSet()
+                }
                 val configured = contacts.filter { it.id in configuredIds }
                 val listState = rememberLazyListState()
                 val scrollBehavior = MiuixScrollBehavior()
@@ -12110,12 +12119,13 @@ private fun CustomFriendAvatarMiuixPage(
                                 }
                             }
                             if (configured.isNotEmpty()) {
-                                item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "已设置头像") }
+                                item { SmallTitle(modifier = Modifier.padding(top = 10.dp), text = "已设置的资料") }
                                 item {
                                     SettingsCard {
                                         configured.forEachIndexed { index, option ->
                                             CustomFriendAvatarRow(context, option, revision) {
                                                 selectedWxid = option.id
+                                                CustomFriendAvatarSettings.setSelected(context, option.id)
                                                 val activity = context as? Activity
                                                 if (activity != null) {
                                                     VoiceForwardMiuixDialog.showChoices(
@@ -12163,7 +12173,10 @@ private fun CustomFriendAvatarMiuixPage(
                 ),
                 onBack = { route = CustomFriendAvatarRoute.MAIN },
                 onConfirm = { selected ->
-                    selected.firstOrNull()?.let { selectedWxid = it.id }
+                    selected.firstOrNull()?.let {
+                        selectedWxid = it.id
+                        CustomFriendAvatarSettings.setSelected(context, it.id)
+                    }
                     route = CustomFriendAvatarRoute.MAIN
                 }
             )
