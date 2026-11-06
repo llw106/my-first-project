@@ -1,4 +1,4 @@
-package com.hf.hidefriend.ui
+package com.hf.dyhide.ui
 
 import android.app.Activity
 import android.content.SharedPreferences
@@ -13,7 +13,7 @@ import android.widget.ListView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import com.hf.hidefriend.Hidden
+import com.hf.dyhide.Hidden
 
 class MainActivity : Activity() {
 
@@ -25,39 +25,32 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences(Hidden.PREFS, MODE_PRIVATE)
-
         val density = resources.displayMetrics.density
         val pad = (16 * density).toInt()
+        val gap = (8 * density).toInt()
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setPadding(pad, pad, pad, pad)
 
         val enabled = Switch(this)
-        enabled.text = "启用隐藏（关闭后微信恢复原样）"
+        enabled.text = "启用隐藏（关闭后抖音恢复原样）"
         enabled.isChecked = prefs.getBoolean(Hidden.KEY_ENABLED, true)
         enabled.setOnCheckedChangeListener { _, value ->
             prefs.edit().putBoolean(Hidden.KEY_ENABLED, value).apply()
         }
         root.addView(enabled)
 
-        val aggressive = Switch(this)
-        aggressive.text = "激进模式（会话局部刷新也过滤，可能错位）"
-        aggressive.isChecked = prefs.getBoolean(Hidden.KEY_AGGRESSIVE, false)
-        aggressive.setOnCheckedChangeListener { _, value ->
-            prefs.edit().putBoolean(Hidden.KEY_AGGRESSIVE, value).apply()
-        }
-        root.addView(aggressive)
-
         val tip = TextView(this)
-        tip.text = "填要隐藏的 wxid（例 wxid_abc123）。隐藏范围：会话列表 / 通讯录 / 搜索。" +
-            "改完名单请强行停止微信再打开，配置才会重新读取。"
+        tip.text = "要隐藏的好友：填抖音 uid（日志里 uid= 后面那串数字），或昵称/备注。\n" +
+                "当前是探针版：先跑一次抖音，从 logcat 里抄 uid 填进来。\n" +
+                "改完名单请强行停止抖音再打开，配置才会重新读取。"
         tip.textSize = 12f
-        tip.setPadding(0, (8 * density).toInt(), 0, (8 * density).toInt())
+        tip.setPadding(0, gap, 0, gap)
         root.addView(tip)
 
         val input = EditText(this)
-        input.hint = "wxid_xxx 或 群id@chatroom"
+        input.hint = "uid 或 昵称"
         input.inputType = InputType.TYPE_CLASS_TEXT
         root.addView(input)
 

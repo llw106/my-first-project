@@ -1,4 +1,4 @@
-package com.hf.hidefriend
+package com.hf.dyhide
 
 import de.robv.android.xposed.XSharedPreferences
 
@@ -6,8 +6,8 @@ import de.robv.android.xposed.XSharedPreferences
  * 隐藏名单。模块进程写 SharedPreferences，微信进程用 XSharedPreferences 读。
  */
 object Hidden {
-    const val MODULE_PKG = "com.hf.hidefriend"
-    const val PREFS = "hidefriend"
+    const val MODULE_PKG = "com.hf.dyhide"
+    const val PREFS = "dyhide"
     const val KEY_LIST = "hidden"
     const val KEY_ENABLED = "enabled"
     const val KEY_AGGRESSIVE = "aggressive"

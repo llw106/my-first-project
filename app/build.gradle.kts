@@ -5,11 +5,10 @@ plugins {
 }
 
 android {
-    namespace = "com.hf.hidefriend"
+    namespace = "com.hf.dyhide"
     compileSdk = 37
-
     defaultConfig {
-        applicationId = "com.hf.hidefriend"
+        applicationId = "com.hf.dyhide"
         minSdk = 27
         targetSdk = 37
         versionCode = 1

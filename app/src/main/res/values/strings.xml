@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">密友</string>
-    <string name="xposed_desc">密友：在微信里隐藏指定好友（会话列表 / 通讯录 / 搜索）</string>
+    <string name="app_name">抖音密友</string>
+    <string name="xposed_desc">抖音密友：隐藏指定好友及其私信会话（探针版，跑一次抖音提交日志）</string>
 </resources>
