@@ -281,6 +281,8 @@ import h.Hchat.hooks.items.inputhint.InputHintFeature
 import h.Hchat.hooks.items.inputhint.InputHintSettings
 import h.Hchat.hooks.items.inputhint.InputHintStats
 import h.Hchat.hooks.items.inputhint.OutgoingMessageStatsRepository
+import h.Hchat.hooks.items.mytabswitch.MyTabSwitchFeature
+import h.Hchat.hooks.items.mytabswitch.MyTabSwitchSettings
 import h.Hchat.hooks.items.keepalive.WeChatKeepAliveFeature
 import h.Hchat.hooks.items.keepalive.WeChatKeepAliveRuntime
 import h.Hchat.hooks.items.keepalive.WeChatKeepAliveSettings
@@ -2522,6 +2524,7 @@ private object HchatConfigBackup {
         WeChatKeepAliveSettings.PREFS_NAME,
         ChatTimeStyleSettings.PREFS_NAME,
         EmojiSaveSettings.PREFS_NAME,
+        MyTabSwitchSettings.PREFS_NAME,
         AudioTransformSettings.PREFS_NAME,
         FakeVoiceDurationSettings.PREFS_NAME,
         MessageBubbleSettings.PREFS_NAME,
@@ -3031,6 +3034,7 @@ private fun practicalFeatureGroups(
                 QuickGroupChatLabelFeature.ID,
                 QuickMomentsFeature.ID,
                 HideChatMenuFeature.ID,
+                MyTabSwitchFeature.ID,
             )
         ),
         FeatureGroupEntry(
@@ -3656,6 +3660,7 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         GroupMemberHistorySettingsProvider.FEATURE_ID -> listOf("历史发言记录", "群成员历史发言", "群成员资料")
         AtAllNotificationBlockFeature.ID -> listOf("屏蔽艾特所有人", "屏蔽@所有人", "艾特全体", "通知拦截")
         EmojiSaveFeature.ID -> listOf("保存表情", "表情保存", "动画表情", "长按菜单", "本地文件")
+        MyTabSwitchFeature.ID -> listOf("我页", "我页面", "收藏", "朋友圈", "视频号", "作品", "服务", "小店与卡包", "发现页管理")
         CallMediaLimitFeature.ID -> listOf("通话媒体限制", "语音通话", "视频通话", "播放语音", "查看视频", "打开拍摄")
         AudioTransformFeature.ID -> listOf(
             "音频转换",
@@ -4225,6 +4230,7 @@ private fun FeatureSettingsPage(
         QuickGroupChatLabelFeature.ID -> QuickGroupChatLabelMiuixPage(context, provider, onBack)
         QuickMomentsFeature.ID -> QuickMomentsMiuixPage(context, provider, onBack)
         HideChatMenuFeature.ID -> HideChatMenuMiuixPage(context, provider, onBack)
+        MyTabSwitchFeature.ID -> MyTabSwitchMiuixPage(context, provider, onBack)
         TypingReportBlockFeature.ID -> TypingReportBlockMiuixPage(context, provider, onBack)
         PatBlockFeature.ID -> PatBlockMiuixPage(context, provider, onBack)
         AutoOriginalImageFeature.ID -> AutoOriginalImageMiuixPage(context, provider, onBack)
@@ -10759,6 +10765,60 @@ private fun EmojiSaveMiuixPage(
                         "长按聊天表情后显示保存入口",
                         EmojiSaveSettings.DEFAULT_ENABLE
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MyTabSwitchMiuixPage(
+    context: Context,
+    provider: FeatureSettingsProvider,
+    onBack: () -> Unit
+) {
+    val sp = remember { HchatStorage.preferences(context, MyTabSwitchSettings.PREFS_NAME) }
+    val listState = rememberLazyListState()
+    val scrollBehavior = MiuixScrollBehavior()
+
+    PageScaffold(
+        title = provider.title(),
+        largeTitle = provider.title(),
+        scrollBehavior = scrollBehavior,
+        bottomBar = { BottomActionBar("返回", onBack) }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
+            state = listState,
+            contentPadding = PaddingValues(
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 84.dp
+            )
+        ) {
+            item { SmallTitle(text = "总开关") }
+            item {
+                SettingsCard {
+                    SwitchRow(
+                        sp,
+                        MyTabSwitchSettings.KEY_ENABLE,
+                        "启用我页条目开关",
+                        "关闭后「我」页所有条目按微信默认显示",
+                        MyTabSwitchSettings.DEFAULT_ENABLE
+                    )
+                }
+            }
+            item { SmallTitle(text = "「我」页条目") }
+            for (entry in MyTabSwitchSettings.ITEMS) {
+                item {
+                    SettingsCard {
+                        SwitchRow(
+                            sp,
+                            entry.prefsKey,
+                            entry.title,
+                            entry.summary,
+                            true
+                        )
+                    }
                 }
             }
         }
