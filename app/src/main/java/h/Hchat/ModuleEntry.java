@@ -132,6 +132,16 @@ public class ModuleEntry implements IXposedHookLoadPackage {
                             }
                         }
                         installCustomBottomBarEarly(app, resolveHostClassLoader(app, lpparam));
+                        //安装后适配提醒：必须主线程、且在 LauncherUI 创建之前挂上。
+                        // 放到 Hchat-Init 线程里会跟 Activity 启动赛跑，冷启动经常输，
+                        // 表现就是「第一次不弹、第二次冷启动才弹」。
+                        if (TermsGate.INSTANCE.isAccepted(app)) {
+                            try {
+                                AdaptPrompt.INSTANCE.install(resolveHostClassLoader(app, lpparam));
+                            } catch (Throwable adaptEarlyError) {
+                                HLog.e("[Hchat:Adapt] 启动早期安装适配提醒失败: " + adaptEarlyError.getMessage(), adaptEarlyError);
+                            }
+                        }
                         new Thread(() -> initModule(app, lpparam), "Hchat-Init").start();
                     }
                 }

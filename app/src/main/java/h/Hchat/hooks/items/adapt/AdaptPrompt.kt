@@ -31,7 +31,7 @@ class AdaptPromptFeature : BaseFeature() {
     override fun name(): String = "安装后适配提醒"
 
     override fun onFeatureInstall(context: FeatureContext) {
-        runCatching { AdaptPrompt.install(context.hostClassLoader()) }
+        runCatching { AdaptPrompt.installForce(context.hostClassLoader()) }
             .onFailure { HLog.e("$TAG 安装失败: ${it.message}", it) }
     }
 
@@ -55,14 +55,34 @@ object AdaptPrompt {
         // 已经挂过就返回：模块入口会先调一次（抢在 DexKit 初始化之前），
         // Feature 安装时还会再调一次，第二次必须是空跑。
         if (!hookedLoaders.add(classLoader)) return
+        val ok = runCatching { installInner(classLoader) }.getOrDefault(false)
+        if (!ok) hookedLoaders.remove(classLoader)
+    }
+
+    /**
+     * 强制重装：FeatureManager.destroyAll() 里的 HookRegistry.unhookAll() 会把
+     * 早装的两个回调一起卸掉。Feature 重新安装时必须能再挂一次，
+     * 否则本进程的适配提醒就永久失效了。
+     */
+    fun installForce(classLoader: ClassLoader) {
+        hookedLoaders.remove(classLoader)
+        install(classLoader)
+    }
+
+    /**
+     * 真正挂 Hook。返回 false = 这次没挂成（例如进程太早、LauncherUI 还加载不出来），
+     * 调用方会把 classLoader 从去重集合里剔除，让后面的调用点能重试。
+     * 否则「提前挂」失败一次，本次进程就再也不会装，弹窗又退回到「第二次冷启动才出」。
+     */
+    private fun installInner(classLoader: ClassLoader): Boolean {
         val launcher = runCatching { classLoader.loadClass("com.tencent.mm.ui.LauncherUI") }
             .getOrNull()
-            ?: return HLog.e("$TAG 找不到 LauncherUI，适配提醒未安装")
+            ?: return false.also { HLog.e("$TAG 找不到 LauncherUI，等下一个调用点重试") }
 
         // 优先 hook 自己的 onResume；没重写就退回父类的（Xposed 对未重写的父类方法同样生效）。
         val onResume = runCatching { launcher.getDeclaredMethod("onResume") }.getOrNull()
             ?: runCatching { launcher.getMethod("onResume") }.getOrNull()
-            ?: return HLog.e("$TAG 找不到 onResume，适配提醒未安装")
+            ?: return false.also { HLog.e("$TAG 找不到 onResume，等下一个调用点重试") }
 
         HookRegistry.get().hook(onResume, object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
@@ -102,6 +122,7 @@ object AdaptPrompt {
             HLog.i("$TAG 已挂 onWindowFocusChanged（窗口获得焦点即弹）")
         }
         HLog.i("$TAG 安装后适配提醒已安装 (LauncherUI.onResume + onWindowFocusChanged)")
+        return true
     }
 
     private fun maybePrompt(activity: Activity, attempt: Int = 0) {
