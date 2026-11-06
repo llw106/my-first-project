@@ -6,6 +6,7 @@ import android.os.Process;
 
 import h.Hchat.crash.CrashReportRuntime;
 import h.Hchat.dexkit.DexFinder;
+import h.Hchat.dexkit.DexCacheJanitor;
 import h.Hchat.hooks.api.media.WeChatImageApi;
 import h.Hchat.hooks.core.FeatureRegistry;
 import h.Hchat.hooks.core.FeatureContext;
@@ -408,6 +409,10 @@ public class ModuleEntry implements IXposedHookLoadPackage {
             // 0. 注册宿主进程的内存压力回调：微信报内存紧张时，
             // 模块里那些可重建的缓存（缩略图、头像位图、节流表）才会提前释放。
             MemoryTrimController.install(hostContext);
+
+            // 0.1 微信包体变了就清掉上一版留下的定位缓存（白名单，业务数据不动）。
+            // 必须在任何 DexKit finder 读缓存之前执行。
+            DexCacheJanitor.INSTANCE.install(hostContext, resolveHostClassLoader(hostContext, lpparam));
 
             // 1. 加载 Native 库（DexKit）
             NativeLibraryLoader nativeLibraryLoader = new NativeLibraryLoader();

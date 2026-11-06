@@ -5,6 +5,7 @@ import h.Hchat.hooks.core.BaseFeature
 import h.Hchat.hooks.core.DexInstallScheduler
 import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.hooks.core.HookRegistry
+import h.Hchat.hooks.items.adapt.AdaptState
 import h.Hchat.preferences.HchatStorage
 import h.Hchat.utils.HLog
 import org.xmlpull.v1.XmlPullParser
@@ -71,15 +72,20 @@ private class MyTabSwitchHooker(
     private var lastSnapshot = ""
 
     private val prefClassRef by lazy {
-        runCatching {
-            context.hostClassLoader().loadClass("com.tencent.mm.ui.base.preference.Preference")
-        }.getOrNull()
+        val name = locatedRef?.pref ?: "com.tencent.mm.ui.base.preference.Preference"
+        runCatching { context.hostClassLoader().loadClass(name) }.getOrNull()
+    }
+
+    /** 优先用「安装后适配」扫出来的类名，没有再退回已知类名（老行为，保证可用）。 */
+    private val locatedRef by lazy {
+        val ctx = context.hostContext()
+        val cl = context.hostClassLoader()
+        MyTabDexFinder.load(ctx, AdaptState.runtimeKey(ctx, cl))
     }
 
     private val screenClassRef by lazy {
-        runCatching {
-            context.hostClassLoader().loadClass("com.tencent.mm.ui.base.preference.g0")
-        }.getOrNull()
+        val name = locatedRef?.screen ?: "com.tencent.mm.ui.base.preference.g0"
+        runCatching { context.hostClassLoader().loadClass(name) }.getOrNull()
     }
 
     /** Preference.q 是条目 key（例：朋友圈 = settings_my_album）。 */

@@ -47,6 +47,7 @@ import h.Hchat.hooks.items.moments.SnsAntiRecallFeature
 import h.Hchat.hooks.items.moments.MomentsUploadTailFeature
 import h.Hchat.hooks.items.momentsfake.MomentsFakeInteractionFeature
 import h.Hchat.hooks.items.multirecall.MultiRecallFeature
+import h.Hchat.hooks.items.adapt.AdaptPromptFeature
 import h.Hchat.hooks.items.mytabswitch.MyTabSwitchFeature
 import h.Hchat.hooks.items.payment.core.AutoRedPacketFeature
 import h.Hchat.hooks.items.payment.fakebalance.FakeWalletBalanceFeature
@@ -100,6 +101,7 @@ object FeatureRegistry {
             .register(DisableHotUpdateFeature())
             .register(ProfileIdFeature())
             .register(HideChatMenuFeature())
+            .register(AdaptPromptFeature())
             .register(MyTabSwitchFeature())
             .register(QuickContactEditFeature())
             .register(QuickGroupChatLabelFeature())
