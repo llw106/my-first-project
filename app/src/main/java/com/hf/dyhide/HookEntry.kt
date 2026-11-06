@@ -24,9 +24,12 @@ class HookEntry : IXposedHookLoadPackage {
                 "onCreate",
                 object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
+                        if (installed) return
+                        installed = true
                         Hidden.reload()
                         log("初始化完成：名单 " + Hidden.size() + " 人，开关=" + Hidden.enabled())
                         Probe.install(lpparam.classLoader)
+                        Dump.run(lpparam.classLoader)
                     }
                 }
             )
@@ -37,6 +40,9 @@ class HookEntry : IXposedHookLoadPackage {
 
     companion object {
         const val TARGET = "com.ss.android.ugc.aweme"
+
+        @Volatile
+        var installed = false
 
         @JvmStatic
         fun log(msg: String) {

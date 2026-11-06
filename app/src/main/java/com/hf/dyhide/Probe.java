@@ -53,6 +53,7 @@ public final class Probe {
                 });
                 any = true;
                 HookEntry.log("探针已装载: " + rvName);
+                Dump.installNotifyHooks(cl, adapterClass);
             } catch (Throwable t) {
                 HookEntry.log("探针装载失败 " + rvName + ": " + t);
             }
