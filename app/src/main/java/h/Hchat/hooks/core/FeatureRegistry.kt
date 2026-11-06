@@ -15,7 +15,6 @@ import h.Hchat.hooks.items.customnickname.CustomNicknameFeature
 import h.Hchat.hooks.items.customnotify.CustomNotificationFeature
 import h.Hchat.hooks.items.editmsg.EditMessageFeature
 import h.Hchat.hooks.items.emojisave.EmojiSaveFeature
-import h.Hchat.hooks.items.moretabpurify.MoreTabPurifyFeature
 import h.Hchat.hooks.items.fakelocation.FakeLocationFeature
 import h.Hchat.hooks.items.swipequote.SwipeQuoteFeature
 import h.Hchat.hooks.items.wechatstep.WechatStepFeature
@@ -153,6 +152,5 @@ object FeatureRegistry {
             .register(FinderMediaDownloadFeature())
             .register(HchatExtraFeature())
             .register(ScriptPluginFeature())
-            .register(MoreTabPurifyFeature())
     }
 }
