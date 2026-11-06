@@ -277,6 +277,29 @@ public class DexFinder {
         this.runtimeCacheKey = buildRuntimeCacheKey(hostContext, classLoader);
     }
 
+    // ==== 适配进度：供「安装后适配」的全盘扫描逐项回调 ====
+    public interface AdaptProgressListener {
+        void onAdaptProgress(String item, int index, int total);
+    }
+
+    private volatile AdaptProgressListener adaptProgressListener;
+    private int adaptProgressIndex;
+    private int adaptProgressTotal;
+
+    public void setAdaptProgressListener(AdaptProgressListener listener) {
+        this.adaptProgressListener = listener;
+    }
+
+    void adaptTick(String item) {
+        adaptProgressIndex++;
+        AdaptProgressListener listener = adaptProgressListener;
+        if (listener == null) return;
+        try {
+            listener.onAdaptProgress(item, adaptProgressIndex, adaptProgressTotal);
+        } catch (Throwable ignored) {
+        }
+    }
+
     public synchronized void resolveAll() {
         if (resolvedAll) {
             logDetail("resolveAll 已完成，跳过重复解析");
@@ -292,46 +315,89 @@ public class DexFinder {
             return;
         }
         cacheDescriptorInvalid = false;
+        adaptProgressIndex = 0;
+        adaptProgressTotal = 41;
+        adaptTick("消息入库");
         resolveAddMsgClasses();
+        adaptTick("收红包");
         resolveReceiveLuckyMoney();
+        adaptTick("开红包");
         resolveOpenLuckyMoney();
+        adaptTick("网络队列");
         resolveNetworkQueue();
+        adaptTick("服务管理");
         resolveServiceManagerApi();
+        adaptTick("发送文本");
         resolveSendTextMsg();
+        adaptTick("通讯录服务");
         resolveGetContactServiceApi();
+        adaptTick("发送图片");
         resolveSendImageApi();
+        adaptTick("图片 CDN");
         resolveImageCdnDownloadApi();
+        adaptTick("发送文件");
         resolveSendFileApi();
+        adaptTick("发送 XML");
         resolveSendXmlApi();
+        adaptTick("群接龙");
         resolveGroupSolitaireApi();
+        adaptTick("本地消息");
         resolveLocalMessageApi();
+        adaptTick("视频任务");
         resolveSendVideoTaskApi();
+        adaptTick("视频路径");
         resolveVideoPathApi();
+        adaptTick("视频信息");
         resolveVideoInfoApi();
+        adaptTick("发送语音");
         resolveSendVoiceApi();
+        adaptTick("发送表情");
         resolveSendEmojiApi();
+        adaptTick("收藏");
         resolveFavoriteApi();
+        adaptTick("转账操作");
         resolveTransferOperationApi();
+        adaptTick("转账查询");
         resolveTransferQueryApi();
+        adaptTick("好友验证");
         resolveVerifyUserApi();
+        adaptTick("名片");
         resolveContactCardApi();
+        adaptTick("拍一拍");
         resolvePatMessageApi();
+        adaptTick("数据库");
         resolveDatabaseApi();
+        adaptTick("删除会话");
         resolveConversationDeleteApi();
+        adaptTick("清空消息");
         resolveMessageClearApi();
+        adaptTick("会话免打扰");
         resolveConversationMuteApi();
+        adaptTick("群成员昵称");
         resolveGroupMemberDisplayName();
+        adaptTick("拉人进群");
         resolveAddChatroomMemberApi();
+        adaptTick("邀请进群");
         resolveInviteChatroomMemberApi();
+        adaptTick("移出群聊");
         resolveDelChatroomMemberApi();
+        adaptTick("消息撤回");
         resolveRevokeMsgApi();
+        adaptTick("标签网络");
         resolveContactLabelNetworkApi();
+        adaptTick("朋友圈上传");
         resolveSnsUploadApi();
+        adaptTick("聊天页");
         resolveChatPageApi();
+        adaptTick("脚本发送");
         resolveScriptSendHookApi();
+        adaptTick("愿望红包");
         resolveWishWxHb();
+        adaptTick("红包兼容");
         resolvePacketCompatClasses();
+        adaptTick("Protobuf 包");
         resolveProtobufPacketApi();
+        adaptTick("ECS 礼物");
         resolveEcsGiftApi();
         logMissingCritical();
         saveCache();

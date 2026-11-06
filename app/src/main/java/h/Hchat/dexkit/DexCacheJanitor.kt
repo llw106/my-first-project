@@ -17,10 +17,14 @@ import h.Hchat.utils.HLog
  * 被误用；但它会一直占着磁盘，也会让一些「部分完成」标记继续留在一个已经
  * 不存在的包体上。这里在模块初始化最开头统一清一次，用白名单，绝不动业务数据。
  *
- * 为什么不主动清 `Hchat_dex_cache`：
- * 那是 DexFinder 的总缓存，体积大、覆盖面广。它内部有 runtimeKey 校验，
- * 包体一变自然失效；主动清空会让 20 多个功能在启动后各自重新扫一遍，
- * 反而制造卡顿。所以留给它自己按需重建。
+ * 注意：Hchat 的配置不是 Android SharedPreferences，而是 FastKV（文件落在
+ * `dataDir/Hchat/name.kva`）。必须走 HchatStorage 拿实例；扫
+ * `shared_prefs` 目录里的 xml 是扫不到的——之前扫错了目录，日志永远是「已清理 0 个」。
+ *
+ * 为什么连 `Hchat_dex_cache`（DexFinder 总缓存）也清：
+ * `resolveAll()` 第一件事就是 `if (loadCache()) { resolvedAll = true; return; }`，
+ * 缓存还在的话「安装后全盘扫描」会直接秒退，等于没扫。清完紧接着由用户点
+ * 「立即适配」做一次完整重扫并写回，比让 20 多个功能各自补扫更省。
  */
 object DexCacheJanitor {
 
@@ -29,8 +33,12 @@ object DexCacheJanitor {
     private const val STATE_PREFS = "Hchat_cache_janitor"
     private const val KEY_RUNTIME = "runtime.key"
 
+    /** FastKV 的落盘后缀，一个配置可能同时有多个。 */
+    private val SUFFIXES = listOf(".kva", ".kvb", ".kvc")
+
     /** 精确名单：体积小、每次包体变化都必然失效的定位缓存。 */
     private val EXACT = listOf(
+        "Hchat_dex_cache",
         "Hchat_settings_dex_cache",
         "Hchat_my_tab_dex_cache",
         "Hchat_extra_class_cache",
@@ -39,6 +47,9 @@ object DexCacheJanitor {
 
     /** 通用规则：各功能自己的方法定位缓存。 */
     private const val METHOD_CACHE_SUFFIX = "_method_cache"
+
+    /** 通用规则：按类名定位的缓存（如 Hchat_transparent_avatar_class_cache）。 */
+    private const val CLASS_CACHE_SUFFIX = "_class_cache"
 
     /** 明确不碰的业务数据（即使名字撞上白名单也不清）。 */
     private val BUSINESS = listOf(
@@ -56,11 +67,18 @@ object DexCacheJanitor {
 
     /**
      * 在模块初始化最前面调用。包体没变时是空操作（一次字符串比较）。
+     *
+     * 判定用「微信包体指纹 + Hchat 自身版本/安装时间」，所以下面两种情况都会触发清理：
+     *   · 微信被重装/升级/降级
+     *   · Hchat 自己出了新包
      */
-    fun install(context: Context, classLoader: ClassLoader) {
+    fun install(context: Context, classLoader: ClassLoader, moduleContext: Context? = null) {
         runCatching {
-            val runtime = WeChatVersionApi.buildCacheKey(context, classLoader)
-            if (runtime.isEmpty()) return
+            val wechatKey = WeChatVersionApi.buildCacheKey(context, classLoader)
+            if (wechatKey.isEmpty()) return
+
+            val hchatTag = moduleTag(moduleContext)
+            val runtime = "$wechatKey|hchat=$hchatTag"
 
             val state = HchatStorage.preferences(context, STATE_PREFS)
             val last = state.getString(KEY_RUNTIME, "").orEmpty()
@@ -75,20 +93,32 @@ object DexCacheJanitor {
                 if (ok) cleared++
             }
             state.edit().putString(KEY_RUNTIME, runtime).apply()
-            HLog.i("$TAG 微信包体变化，已清理 $cleared 个定位缓存（上次=${last.ifEmpty { "无" }}）")
+            HLog.i("$TAG 包体或模块版本变化，已清理 $cleared 个定位缓存（hchat=$hchatTag）")
         }.onFailure { HLog.e("$TAG 清理失败: ${it.message}", it) }
     }
 
-    /** 扫 shared_prefs 目录，按白名单挑出定位缓存（只读目录，不猜名字）。 */
+    /** 模块自身的「版本名/安装时间」，用来感知 Hchat 自己换了包。 */
+    private fun moduleTag(moduleContext: Context?): String {
+        if (moduleContext == null) return ""
+        return runCatching {
+            val info = moduleContext.packageManager.getPackageInfo(moduleContext.packageName, 0)
+            val installed = info.applicationInfo?.let { java.io.File(it.sourceDir).lastModified() } ?: 0L
+            "${info.versionName.orEmpty()}/$installed"
+        }.getOrDefault("")
+    }
+
+    /** 扫 FastKV 目录（dataDir/Hchat），按白名单挑出定位缓存；不猜名字，只认落盘文件。 */
     private fun locatorCacheNames(context: Context): List<String> {
-        val dir = runCatching {
-            java.io.File(context.applicationInfo.dataDir, "shared_prefs")
-        }.getOrNull() ?: return emptyList()
+        val dir = runCatching { HchatStorage.storageDir(context) }.getOrNull() ?: return emptyList()
         val files = dir.listFiles() ?: return emptyList()
         return files.asSequence()
-            .filter { it.isFile && it.name.endsWith(".xml") }
-            .map { it.name.removeSuffix(".xml") }
+            .filter { it.isFile }
+            .mapNotNull { file ->
+                val suffix = SUFFIXES.firstOrNull { file.name.endsWith(it) } ?: return@mapNotNull null
+                file.name.removeSuffix(suffix)
+            }
             .filter { isLocatorCache(it) }
+            .distinct()
             .toList()
     }
 
@@ -96,6 +126,6 @@ object DexCacheJanitor {
         if (!name.startsWith(PREFIX)) return false
         if (BUSINESS.contains(name)) return false
         if (EXACT.contains(name)) return true
-        return name.endsWith(METHOD_CACHE_SUFFIX)
+        return name.endsWith(METHOD_CACHE_SUFFIX) || name.endsWith(CLASS_CACHE_SUFFIX)
     }
 }

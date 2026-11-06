@@ -410,10 +410,6 @@ public class ModuleEntry implements IXposedHookLoadPackage {
             // 模块里那些可重建的缓存（缩略图、头像位图、节流表）才会提前释放。
             MemoryTrimController.install(hostContext);
 
-            // 0.1 微信包体变了就清掉上一版留下的定位缓存（白名单，业务数据不动）。
-            // 必须在任何 DexKit finder 读缓存之前执行。
-            DexCacheJanitor.INSTANCE.install(hostContext, resolveHostClassLoader(hostContext, lpparam));
-
             // 1. 加载 Native 库（DexKit）
             NativeLibraryLoader nativeLibraryLoader = new NativeLibraryLoader();
             nativeLibraryLoader.loadDexKit(hostContext, getClass().getClassLoader());
@@ -421,6 +417,10 @@ public class ModuleEntry implements IXposedHookLoadPackage {
 
             // 2. 创建模块自身 Context
             Context moduleContext = createModuleContext(hostContext);
+
+            // 0.1 微信包体变了、或 Hchat 自己换了包，就清掉上一版留下的定位缓存
+            //（白名单，业务数据不动）。必须在任何 DexKit finder 读缓存之前执行。
+            DexCacheJanitor.INSTANCE.install(hostContext, resolveHostClassLoader(hostContext, lpparam), moduleContext);
             ConfigStore configStore = new ConfigStore(hostContext);
 
             ModuleResourceMenuFallback.INSTANCE.install(resolveHostClassLoader(hostContext, lpparam));
