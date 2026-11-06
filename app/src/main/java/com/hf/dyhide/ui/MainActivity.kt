@@ -101,6 +101,7 @@ class MainActivity : Activity() {
     }
 
     private fun reload() {
+        makeReadable()
         items.clear()
         val raw = prefs.getString(Hidden.KEY_LIST, "") ?: ""
         items.addAll(raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() })
@@ -108,6 +109,23 @@ class MainActivity : Activity() {
     }
 
     private fun persist() {
-        prefs.edit().putString(Hidden.KEY_LIST, items.joinToString("\n")).apply()
+        prefs.edit().putString(Hidden.KEY_LIST, items.joinToString("\n")).commit()
+        makeReadable()
+    }
+
+    /**
+     * 让抖音进程能读到这份配置。
+     * Android 7+ 起 SharedPreferences 默认只有 App 自己能读，
+     * XSharedPreferences 在抖音进程里读必须文件对 other 可读。
+     */
+    private fun makeReadable() {
+        try {
+            val dir = java.io.File(applicationInfo.dataDir, "shared_prefs")
+            val file = java.io.File(dir, Hidden.PREFS + ".xml")
+            dir.setExecutable(true, false)
+            dir.setReadable(true, false)
+            file.setReadable(true, false)
+        } catch (t: Throwable) {
+        }
     }
 }

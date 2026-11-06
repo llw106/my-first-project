@@ -32,13 +32,25 @@ public final class SessionHider {
         }
 
         int hooked = 0;
+        int candidates = 0;
         for (Method method : clz.getDeclaredMethods()) {
             Class<?>[] params = method.getParameterTypes();
             if (method.getReturnType() != void.class) continue;
             if (params.length == 0 || params.length > 2) continue;
             if (!List.class.isAssignableFrom(params[0])) continue;
+            candidates++;
+            boolean isNative = java.lang.reflect.Modifier.isNative(method.getModifiers());
+            String name = method.getName();
             try {
-                XposedHelpers.findAndHookMethod(clz, method.getName(), params, new XC_MethodHook() {
+                StringBuilder sig = new StringBuilder(name).append('(');
+                for (int i = 0; i < params.length; i++) {
+                    if (i > 0) sig.append(',');
+                    sig.append(params[i].getSimpleName());
+                }
+                sig.append(')');
+                final String label = sig.toString();
+
+                XposedHelpers.findAndHookMethod(clz, name, params, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
                         try {
@@ -49,10 +61,12 @@ public final class SessionHider {
                     }
                 });
                 hooked++;
-            } catch (Throwable ignored) {
+                HookEntry.log("[Hide] hook 成功 " + label + " native=" + isNative);
+            } catch (Throwable t) {
+                HookEntry.log("[Hide] hook 失败 " + name + " native=" + isNative + " -> " + t);
             }
         }
-        HookEntry.log("[Hide] 会话数据入口已 hook " + hooked + " 个，名单 " + Hidden.size() + " 人");
+        HookEntry.log("[Hide] 候选 " + candidates + " 个，成功 " + hooked + " 个，名单 " + Hidden.size() + " 人");
     }
 
     private static void filter(MethodHookParam param) {

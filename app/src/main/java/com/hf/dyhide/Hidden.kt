@@ -23,6 +23,8 @@ object Hidden {
 
     fun reload() {
         try {
+            val f = java.io.File("/data/data/com.hf.dyhide/shared_prefs/dyhide.xml")
+            HookEntry.log("配置: exists=" + f.exists() + " readable=" + f.canRead() + " size=" + f.length())
             val xsp = XSharedPreferences(MODULE_PKG, PREFS)
             xsp.reload()
             val raw = xsp.getString(KEY_LIST, "") ?: ""
