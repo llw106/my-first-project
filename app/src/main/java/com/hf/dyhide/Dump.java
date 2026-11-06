@@ -51,7 +51,34 @@ public final class Dump {
             dumpFields(clz);
             dumpMethods(clz);
         }
+        deepDump(cl);
         HookEntry.log("[Dump] 结构 dump 结束");
+    }
+
+    /** 顺着 adapter 的返回类型，自动挖出 ViewModel / Logic / Model 类。 */
+    private static void deepDump(ClassLoader cl) {
+        String[] seeds = {
+                "com.ss.android.ugc.aweme.following.ui.adapter.FollowerListGroupAdapter",
+                "com.ss.android.ugc.aweme.im.sdk.module.session.rips.list.BaseSessionListAdapter"
+        };
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (String seed : seeds) {
+            try {
+                Class<?> clz = XposedHelpers.findClass(seed, cl);
+                for (Method method : clz.getDeclaredMethods()) {
+                    Class<?> rt = method.getReturnType();
+                    String name = rt.getName();
+                    if (!name.startsWith("com.ss.android.ugc.aweme")) continue;
+                    if (!(name.contains("ViewModel") || name.contains("Model") || name.contains("Logic"))) continue;
+                    if (!seen.add(name)) continue;
+                    HookEntry.log("[Dump] ----- 关联类 " + name);
+                    dumpFields(rt);
+                    dumpMethods(rt);
+                }
+            } catch (Throwable t) {
+                HookEntry.log("[Dump] deep " + seed + " 失败: " + t);
+            }
+        }
     }
 
     private static void dumpFields(Class<?> clz) {

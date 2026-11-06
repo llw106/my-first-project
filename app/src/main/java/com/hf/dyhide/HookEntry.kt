@@ -29,6 +29,7 @@ class HookEntry : IXposedHookLoadPackage {
                         Hidden.reload()
                         log("初始化完成：名单 " + Hidden.size() + " 人，开关=" + Hidden.enabled())
                         Probe.install(lpparam.classLoader)
+                        SessionHider.install(lpparam.classLoader)
                         Dump.run(lpparam.classLoader)
                     }
                 }
