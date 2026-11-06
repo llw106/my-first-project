@@ -34,6 +34,35 @@ object MoreTabPurifySettings {
     /** 内部条目，不作为用户开关暴露 */
     val INTERNAL_ITEMS = listOf("WeUI")
 
+    /**
+     * 「我」页条目 key → 用户看到的标题。
+     *
+     * 条目刚被创建时标题往往还没赋值（实测「小店与卡包」就是这样），只看标题会漏，
+     * 所以拦截逻辑以 key 为准、标题兜底。
+     */
+    val KEY_TITLES: Map<String, String> = mapOf(
+        "settings_mm_favorite" to "收藏",
+        "settings_my_album" to "朋友圈",
+        "settings_my_finder_album" to "视频号",
+        "settings_my_finder_and_biz" to "视频号",
+        "settings_mm_cardpackage" to "订单与卡包",
+        "settings_mm_cardpackage_new" to "小店与卡包",
+        "settings_emoji_store" to "表情"
+    )
+
+    /**
+     * 解析条目的开关名：key 命中映射表优先，否则用标题。
+     * 返回 null 表示这个条目不归「页面净化」管。
+     */
+    fun itemNameOf(key: String, title: String): String? {
+        KEY_TITLES[key]?.let { return it }
+        if (key.isEmpty() || !key.startsWith("settings_")) return null
+        if (title.isEmpty()) return null
+        if (title == PROTECTED_ITEM) return null
+        if (INTERNAL_ITEMS.contains(title)) return null
+        return title
+    }
+
     fun hidden(sp: SharedPreferences): Set<String> {
         return try {
             sp.getStringSet(KEY_HIDDEN, emptySet()) ?: emptySet()
