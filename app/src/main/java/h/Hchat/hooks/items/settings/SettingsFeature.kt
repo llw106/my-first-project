@@ -6,6 +6,7 @@ import h.Hchat.hooks.api.ui.SettingsInjector
 import h.Hchat.hooks.core.DexInstallScheduler
 import h.Hchat.hooks.core.Feature
 import h.Hchat.hooks.core.FeatureContext
+import h.Hchat.hooks.items.adapt.AdaptSettingsProvider
 import h.Hchat.hooks.items.quickread.QuickMarkReadRuntime
 import h.Hchat.ui.FeatureSettingsProvider
 import h.Hchat.utils.HLog
@@ -23,6 +24,7 @@ class SettingsFeature : Feature {
         context.uiRegistry().registerProvider(SettingsEntryProvider())
         context.uiRegistry().registerProvider(PluginAgentEntryProvider())
         context.uiRegistry().registerProvider(CrashReportSettingsProvider())
+        context.uiRegistry().registerProvider(AdaptSettingsProvider())
     }
 
     @Throws(Throwable::class)

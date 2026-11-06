@@ -211,6 +211,9 @@ import h.Hchat.hooks.api.media.WeChatFavoriteItem
 import h.Hchat.hooks.api.message.WeChatMessageObserveApi
 import h.Hchat.hooks.api.model.ContactLabelBean
 import h.Hchat.hooks.api.model.WeChatContact
+import h.Hchat.hooks.items.adapt.AdaptScan
+import h.Hchat.hooks.items.adapt.AdaptSettingsProvider
+import h.Hchat.hooks.items.adapt.AdaptState
 import h.Hchat.hooks.items.audiotransform.AudioTransformFeature
 import h.Hchat.hooks.items.audiotransform.AudioTransformCancelledException
 import h.Hchat.hooks.items.audiotransform.AudioTransformSegmenter
@@ -2757,7 +2760,13 @@ private fun MainSettingsPage(
             it.featureId() != ScriptPluginFeature.ID
     }
     val practicalGroups = remember(practicalProviders, enhanceProviders) {
-        practicalFeatureGroups(practicalProviders, enhanceProviders)
+        val base = practicalFeatureGroups(practicalProviders, enhanceProviders)
+        // 「基础配置」单独置顶：扫描适配这类维护项不该混在业务功能里。
+        val adaptGroup = FeatureGroupEntry(
+            title = "基础配置",
+            providers = practicalProviders.filterByIds(AdaptSettingsProvider.ID)
+        )
+        if (adaptGroup.providers.isEmpty()) base else listOf(adaptGroup) + base
     }
     val entertainmentGroups = remember(entertainmentProviders) {
         entertainmentFeatureGroups(entertainmentProviders)
@@ -3759,6 +3768,7 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         ProtobufPacketFeature.ID -> listOf("Protobuf抓包", "Protobuf发包", "抓包", "发包", "pb", "网络包", "重放")
         EditMessageFeature.ID -> listOf("修改聊天记录", "编辑消息", "改消息", "消息XML", "发送XML")
         CrashReportSettingsProvider.ID -> listOf("捕获异常日志", "异常日志", "闪退日志", "Java异常", "Native异常", "ANR", "调试")
+        AdaptSettingsProvider.ID -> listOf("扫描适配", "适配", "重新扫描", "dex", "基础配置", "升级")
         GroupNicknameColorSettings.FEATURE_ID -> listOf("群昵称自定义颜色", "群昵称颜色", "群内昵称颜色", "昵称渐变", "昵称粗细", "颜色取色器")
         MemberTitleFeature.ID -> listOf("群成员头衔", "头衔颜色", "自定义头衔", "头衔模板", "群昵称头衔", "颜色取色器")
         ScriptPluginFeature.ID -> listOf("脚本插件", "插件列表", "插件 Agent", "AI 生成插件", "插件 README", "插件配置", "启用插件", "禁用插件")
@@ -4315,6 +4325,7 @@ private fun FeatureSettingsPage(
         FakeScanCameraFeature.ID -> FakeScanCameraMiuixPage(context, provider, onBack)
         FinderMediaDownloadFeature.ID -> FinderMediaDownloadMiuixPage(context, provider, onBack)
         CrashReportSettingsProvider.ID -> CrashReportMiuixPage(context, provider, onBack)
+        AdaptSettingsProvider.ID -> AdaptMiuixPage(context, provider, onBack)
         ScriptPluginFeature.ID -> ScriptPluginMiuixPage(
             context,
             provider,
@@ -21616,6 +21627,156 @@ private fun CrashReportMiuixPage(
                             Toast.makeText(context, "保存设置失败", Toast.LENGTH_SHORT).show()
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 「基础配置 → 扫描适配」。
+ *
+ * 做三件事：显示当前包体与适配状态、给一个手动重扫的按钮、扫描时显示进度和结果。
+ * 扫描逻辑与安装后的自动弹窗共用 AdaptScan（43 项）。
+ */
+@Composable
+private fun AdaptMiuixPage(
+    context: Context,
+    provider: FeatureSettingsProvider,
+    onBack: () -> Unit
+) {
+    var scanning by remember { mutableStateOf(false) }
+    var progressIndex by remember { mutableStateOf(0) }
+    var progressItem by remember { mutableStateOf("") }
+    var resultText by remember { mutableStateOf("") }
+    var stateVersion by remember { mutableStateOf(0) }
+
+    val classLoader = remember(context) { context.classLoader ?: ClassLoader.getSystemClassLoader() }
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    val listState = rememberLazyListState()
+    val scrollBehavior = MiuixScrollBehavior()
+
+    val adapted = remember(stateVersion) {
+        runCatching { AdaptState.isAdapted(context, classLoader) }.getOrDefault(false)
+    }
+    val adaptedAtText = remember(stateVersion) {
+        val at = AdaptState.adaptedAt(context)
+        if (at <= 0L) {
+            "从未扫描"
+        } else {
+            java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
+                .format(java.util.Date(at))
+        }
+    }
+    val lastSummary = remember(stateVersion) { AdaptState.adaptedSummary(context) }
+    val wechatVersion = remember { AdaptState.versionName(context) }
+
+    PageScaffold(
+        title = provider.title(),
+        largeTitle = provider.title(),
+        scrollBehavior = scrollBehavior,
+        bottomBar = { BottomActionBar("返回", onBack) }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
+            state = listState,
+            contentPadding = PaddingValues(
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 84.dp
+            )
+        ) {
+            item { SmallTitle(text = "当前包体") }
+            item {
+                SettingsCard {
+                    InfoRow(label = "微信版本", value = wechatVersion.ifBlank { "未知" })
+                    InsetDivider()
+                    InfoRow(
+                        label = "适配状态",
+                        value = if (adapted) "已适配" else "未适配"
+                    )
+                    InsetDivider()
+                    InfoRow(label = "上次扫描", value = adaptedAtText)
+                    if (lastSummary.isNotBlank()) {
+                        InsetDivider()
+                        InfoRow(label = "上次结果", value = lastSummary)
+                    }
+                }
+            }
+
+            item { SmallTitle(text = "维护") }
+            item {
+                SettingsCard {
+                    ActionRow(
+                        title = if (scanning) {
+                            "正在扫描 $progressIndex/${AdaptScan.TOTAL}"
+                        } else {
+                            "开始扫描适配"
+                        },
+                        summary = when {
+                            scanning -> progressItem
+                            AdaptScan.dexKit == null -> "DexKit 尚未就绪，请重启微信后再试"
+                            else -> "逐项定位微信 dex，共 ${AdaptScan.TOTAL} 项，约 3~10 秒"
+                        },
+                        onClick = {
+                            if (scanning || AdaptScan.dexKit == null) return@ActionRow
+                            scanning = true
+                            progressIndex = 0
+                            progressItem = "准备中…"
+                            resultText = ""
+                            Thread {
+                                val result = runCatching {
+                                    AdaptScan.run(
+                                        context = context,
+                                        classLoader = classLoader,
+                                        holder = AdaptScan.holder,
+                                        dexKit = AdaptScan.dexKit,
+                                        fallbackFinder = AdaptScan.finder
+                                    ) { index, item ->
+                                        mainHandler.post {
+                                            progressIndex = index
+                                            progressItem = item
+                                        }
+                                    }
+                                }.getOrNull()
+                                mainHandler.post {
+                                    scanning = false
+                                    if (result == null) {
+                                        resultText = "扫描失败，可以再试一次。"
+                                    } else {
+                                        // 与安装后的弹窗保持一致：扫完就记成已适配，失败项照实写进去。
+                                        AdaptState.markAdapted(
+                                            context = context,
+                                            classLoader = classLoader,
+                                            versionName = wechatVersion,
+                                            summary = result.summary(),
+                                            failed = result.failed
+                                        )
+                                        resultText = if (result.ok) {
+                                            "扫描完成：${result.summary()}\n重启微信后生效。"
+                                        } else {
+                                            "${result.summary()}\n未命中的项不影响其它功能，可以再扫一次。"
+                                        }
+                                        stateVersion++
+                                    }
+                                }
+                            }.also { it.name = "Hchat-ManualAdapt"; it.isDaemon = true }.start()
+                        }
+                    )
+                }
+            }
+
+            if (resultText.isNotBlank()) {
+                item { SmallTitle(text = "本次结果") }
+                item {
+                    SettingsCard {
+                        EmptyText(resultText)
+                    }
+                }
+            }
+
+            item {
+                SettingsCard {
+                    EmptyText("说明：微信升级后类名会重新混淆，扫码会把 Hchat 依赖的类和方法重新定位一遍。\n没命中的项通常是微信改了结构，不影响其它功能。")
                 }
             }
         }

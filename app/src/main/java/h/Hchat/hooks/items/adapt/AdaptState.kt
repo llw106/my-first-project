@@ -19,6 +19,8 @@ object AdaptState {
     private const val KEY_ADAPTED = "adapted.key"
     private const val KEY_ADAPTED_AT = "adapted.at"
     private const val KEY_VERSION = "adapted.version"
+    private const val KEY_FAILED = "adapted.failed"
+    private const val KEY_SUMMARY = "adapted.summary"
 
     /** 由 AdaptPrompt 安装时注入的「Hchat 自身身份」，让适配状态随模块换包一起失效。 */
     @Volatile
@@ -52,15 +54,37 @@ object AdaptState {
         return runtime == adaptedKey(context)
     }
 
-    fun markAdapted(context: Context, classLoader: ClassLoader, versionName: String) {
+    fun markAdapted(
+        context: Context,
+        classLoader: ClassLoader,
+        versionName: String,
+        summary: String = "",
+        failed: List<String> = emptyList()
+    ) {
         val runtime = runtimeKey(context, classLoader)
         if (runtime.isEmpty()) return
         prefs(context).edit()
             .putString(KEY_ADAPTED, runtime)
             .putString(KEY_VERSION, versionName)
+            .putString(KEY_SUMMARY, summary)
+            .putString(KEY_FAILED, failed.joinToString("|"))
             .putLong(KEY_ADAPTED_AT, System.currentTimeMillis())
             .apply()
     }
+
+    /** 上一次扫描的时间（毫秒），没扫过是 0。 */
+    fun adaptedAt(context: Context): Long =
+        prefs(context).getLong(KEY_ADAPTED_AT, 0L)
+
+    /** 上一次扫描的结果摘要，例如「共 43 项，1 项未命中：我页条目」。 */
+    fun adaptedSummary(context: Context): String =
+        prefs(context).getString(KEY_SUMMARY, "").orEmpty()
+
+    /** 上一次扫描没命中的项。 */
+    fun lastFailed(context: Context): List<String> =
+        prefs(context).getString(KEY_FAILED, "").orEmpty()
+            .split("|")
+            .filter { it.isNotBlank() }
 
     fun adaptedVersion(context: Context): String =
         prefs(context).getString(KEY_VERSION, "").orEmpty()
@@ -69,4 +93,26 @@ object AdaptState {
     fun installedAt(context: Context): Long = runCatching {
         java.io.File(context.packageManager.getApplicationInfo(context.packageName, 0).sourceDir).lastModified()
     }.getOrDefault(0L)
+
+    /** 「版本 8.0.80（3220）\n安装于 09-30 12:31」这样的一行描述，弹窗和设置页共用。 */
+    fun describe(context: Context): String {
+        val info = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0)
+        }.getOrNull()
+        val versionName = info?.versionName ?: "?"
+        val versionCode = if (android.os.Build.VERSION.SDK_INT >= 28) {
+            runCatching { info?.longVersionCode }.getOrNull() ?: 0L
+        } else {
+            @Suppress("DEPRECATION")
+            runCatching { info?.versionCode?.toLong() }.getOrNull() ?: 0L
+        }
+        val installedText = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
+            .format(java.util.Date(installedAt(context)))
+        return "版本 $versionName（$versionCode）\n安装于 $installedText"
+    }
+
+    /** 微信版本名，适配状态里一起存下来，方便排查「哪一版适配过」。 */
+    fun versionName(context: Context): String = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+    }.getOrNull().orEmpty()
 }

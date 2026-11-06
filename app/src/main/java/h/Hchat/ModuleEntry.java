@@ -7,6 +7,7 @@ import android.os.Process;
 import h.Hchat.crash.CrashReportRuntime;
 import h.Hchat.dexkit.DexFinder;
 import h.Hchat.dexkit.DexCacheJanitor;
+import h.Hchat.hooks.items.adapt.AdaptScan;
 import h.Hchat.hooks.api.media.WeChatImageApi;
 import h.Hchat.hooks.core.FeatureRegistry;
 import h.Hchat.hooks.core.FeatureContext;
@@ -449,6 +450,8 @@ public class ModuleEntry implements IXposedHookLoadPackage {
                 DexBridgeHolder dexBridgeHolder = new DexBridgeHolder(
                         dexKit, finder, hostClassLoader, apkPath);
                 ScriptPluginAgentLocalReverseTools.install(dexBridgeHolder, hostContext);
+                // 3.5 把运行时交给「基础配置 → 扫描适配」，手动扫描不依赖 Feature 开关
+                AdaptScan.INSTANCE.attach(dexBridgeHolder, dexKit, finder);
 
                 // 5. 创建统一上下文
                 featureContext = new FeatureContext(
