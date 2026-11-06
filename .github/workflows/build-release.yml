@@ -104,11 +104,23 @@ jobs:
 
       - name: 构建 release（R8 开启）
         run: |
-          set -e
+          set -o pipefail
           echo "版本: ${HCAT_VERSION_NAME} (${HCAT_VERSION_CODE})"
           grep -n "isMinifyEnabled\|isShrinkResources" app/build.gradle.kts || true
-          sh ./gradlew :app:assembleRelease --no-daemon -x lintVitalAnalyzeRelease --stacktrace
-
+          sh ./gradlew :app:assembleRelease --no-daemon -x lintVitalAnalyzeRelease --stacktrace 2>&1 | tee /tmp/release-build.log
+      - name: 失败时输出错误摘要
+        if: failure()
+        run: |
+          {
+            echo "### 构建失败，错误摘要"
+            echo '```'
+            grep -nE "What went wrong|^e: |error:|Missing class|Caused by|FAILURE:" -A 6 /tmp/release-build.log | head -120 || true
+            echo '```'
+            echo "### 日志尾部"
+            echo '```'
+            tail -80 /tmp/release-build.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
