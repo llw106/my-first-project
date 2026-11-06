@@ -163,7 +163,7 @@ class ConfigStore(private val hostContext: Context) {
 
     companion object {
         private const val TAG = "[Hchat:ConfigStore]"
-        private const val GLOBAL_PREFS = "Hchat_global_config"
+        const val GLOBAL_PREFS = "Hchat_global_config"
         private const val FEATURE_PREFS_PREFIX = "Hchat_feature_"
     }
 }

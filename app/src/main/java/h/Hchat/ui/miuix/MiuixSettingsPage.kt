@@ -443,6 +443,7 @@ import h.Hchat.hooks.items.hchatextra.HchatExtraSettings
 import h.Hchat.hooks.items.voicepreview.VoicePreviewFeature
 import h.Hchat.hooks.items.voicepreview.VoicePreviewSettings
 import h.Hchat.media.AudioTransformBridge
+import h.Hchat.preferences.ConfigStore
 import h.Hchat.preferences.HchatStorage
 import h.Hchat.preferences.TermsGate
 import h.Hchat.ui.FeatureSettingsProvider
@@ -4305,6 +4306,7 @@ private fun FeatureSettingsPage(
         OriginalMomentsUploadFeature.ID -> OriginalMomentsUploadMiuixPage(context, provider, onBack)
         MomentsUploadTailFeature.ID -> MomentsUploadTailMiuixPage(context, provider, onBack)
         SnsAntiRecallFeature.ID -> SnsAntiRecallMiuixPage(context, provider, onBack)
+        MomentsVideoNoAutoPlayFeature.ID -> MomentsVideoNoAutoPlayMiuixPage(context, provider, onBack)
         MomentsFakeLikeSettingsProvider.ID,
         MomentsFakeCommentSettingsProvider.ID,
         MomentsFakeForwardSettingsProvider.ID -> MomentsFakeInteractionMiuixPage(context, provider, onBack)
@@ -35368,6 +35370,51 @@ private fun OptionPickerPage(
                         )
                         if (index < request.options.lastIndex) InsetDivider()
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MomentsVideoNoAutoPlayMiuixPage(
+    context: Context,
+    provider: FeatureSettingsProvider,
+    onBack: () -> Unit
+) {
+    val sp = remember { HchatStorage.preferences(context, ConfigStore.GLOBAL_PREFS) }
+    val listState = rememberLazyListState()
+    val scrollBehavior = MiuixScrollBehavior()
+
+    PageScaffold(
+        title = provider.title(),
+        largeTitle = provider.title(),
+        scrollBehavior = scrollBehavior,
+        bottomBar = { BottomActionBar("返回", onBack) }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
+            state = listState,
+            contentPadding = PaddingValues(
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 84.dp
+            )
+        ) {
+            item { SmallTitle(text = "功能开关") }
+            item {
+                SettingsCard {
+                    SwitchRow(
+                        sp,
+                        MomentsVideoNoAutoPlayFeature.KEY_ENABLED,
+                        "禁止自动播放",
+                        "开启后朋友圈视频在 Wi-Fi 和移动网络下都要点一下才播；关闭则恢复微信原生自动播放",
+                        true
+                    )
+                }
+            }
+            item {
+                SettingsCard {
+                    EmptyText("改完立即生效，不用重启微信；封面保留，点一下才进播放。")
                 }
             }
         }

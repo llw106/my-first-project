@@ -40,6 +40,9 @@ class MomentsVideoNoAutoPlayFeature : BaseFeature() {
 
     companion object {
         const val ID = "moments_video_no_autoplay"
+
+        /** 设置页开关用的 key（写在全局配置表里），默认 true = 拦截自动播放。 */
+        const val KEY_ENABLED = "moments_video_no_autoplay_enabled"
         private const val TAG = "[Hchat:NoAutoPlay]"
 
         /** 两条判定实现共有的日志串，8.0.80 全 dex 只有 2 处命中。 */
@@ -54,7 +57,7 @@ class MomentsVideoNoAutoPlayFeature : BaseFeature() {
 
         /** 每次命中都重新读配置，设置页关掉开关后立刻恢复自动播放。 */
         private fun enabledNow(): Boolean = try {
-            configStore?.getGlobalBoolean(ID + "_enabled", true) ?: true
+            configStore?.getGlobalBoolean(KEY_ENABLED, true) ?: true
         } catch (_: Throwable) {
             true
         }

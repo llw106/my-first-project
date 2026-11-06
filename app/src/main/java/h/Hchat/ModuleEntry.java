@@ -8,6 +8,7 @@ import h.Hchat.crash.CrashReportRuntime;
 import h.Hchat.dexkit.DexFinder;
 import h.Hchat.dexkit.DexCacheJanitor;
 import h.Hchat.hooks.items.adapt.AdaptScan;
+import h.Hchat.hooks.items.adapt.AdaptPrompt;
 import h.Hchat.hooks.api.media.WeChatImageApi;
 import h.Hchat.hooks.core.FeatureRegistry;
 import h.Hchat.hooks.core.FeatureContext;
@@ -425,6 +426,15 @@ public class ModuleEntry implements IXposedHookLoadPackage {
             ConfigStore configStore = new ConfigStore(hostContext);
 
             ModuleResourceMenuFallback.INSTANCE.install(resolveHostClassLoader(hostContext, lpparam));
+            // 1.5 适配提醒必须抢在 DexKit 初始化之前挂上。
+            // 实测 DexKit 初始化 + DexFinder 构造要 20~30 秒，等它结束再挂 Hook，
+            // LauncherUI.onResume / onWindowFocusChanged 早就跑完了，
+            // 第一次冷启动就永远弹不出来（表现就是“第二次启动才弹”）。
+            try {
+                AdaptPrompt.INSTANCE.install(resolveHostClassLoader(hostContext, lpparam));
+            } catch (Throwable adaptError) {
+                HLog.e("[Hchat:Adapt] 提前安装适配提醒失败: " + adaptError.getMessage(), adaptError);
+            }
 
             DexInstallScheduler.runDexKitTask(() -> {
                 // 3. 初始化 DexKit。优先使用 Tinker 之后的运行时 ClassLoader。

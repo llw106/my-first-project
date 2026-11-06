@@ -8,6 +8,8 @@ import h.Hchat.hooks.core.BaseFeature
 import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.hooks.core.HookRegistry
 import h.Hchat.utils.HLog
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "[Hchat:Adapt]"
 
@@ -29,7 +31,7 @@ class AdaptPromptFeature : BaseFeature() {
     override fun name(): String = "安装后适配提醒"
 
     override fun onFeatureInstall(context: FeatureContext) {
-        runCatching { AdaptPrompt.install(context) }
+        runCatching { AdaptPrompt.install(context.hostClassLoader()) }
             .onFailure { HLog.e("$TAG 安装失败: ${it.message}", it) }
     }
 
@@ -38,16 +40,21 @@ class AdaptPromptFeature : BaseFeature() {
     }
 }
 
-private object AdaptPrompt {
+object AdaptPrompt {
 
     private var promptedThisProcess = false
+
+    /** 同一个 ClassLoader 只挂一次：入口处会提前挂，Feature 安装时再进来就是空跑。 */
+    private val hookedLoaders = Collections.newSetFromMap(ConcurrentHashMap<ClassLoader, Boolean>())
 
     /** 已经在「等窗口可见 → 弹窗」的流程里，防止多次 onResume 叠加重试链。 */
     @Volatile
     private var attempting = false
 
-    fun install(context: FeatureContext) {
-        val classLoader = context.hostClassLoader()
+    fun install(classLoader: ClassLoader) {
+        // 已经挂过就返回：模块入口会先调一次（抢在 DexKit 初始化之前），
+        // Feature 安装时还会再调一次，第二次必须是空跑。
+        if (!hookedLoaders.add(classLoader)) return
         val launcher = runCatching { classLoader.loadClass("com.tencent.mm.ui.LauncherUI") }
             .getOrNull()
             ?: return HLog.e("$TAG 找不到 LauncherUI，适配提醒未安装")
@@ -156,6 +163,14 @@ private object AdaptPrompt {
         val progress = AdaptDialog.showProgress(activity)
 
         Thread {
+            // 弹窗现在抢在 DexKit 初始化之前弹，用户可能秒点「立即适配」。
+            // 这里最多等 20 秒，避免扫出一堆「DexKit 未就绪」的假失败项。
+            val deadline = System.currentTimeMillis() + 20_000L
+            while ((AdaptScan.holder == null || AdaptScan.dexKit == null) &&
+                System.currentTimeMillis() < deadline
+            ) {
+                runCatching { Thread.sleep(200L) }
+            }
             val result = runCatching {
                 AdaptScan.run(context, classLoader) { index, item ->
                     handler.post { progress?.update(index, item) }
