@@ -36,13 +36,13 @@ object MyTabSwitchSettings {
 
     /** 按「我」页实际显示顺序排列。 */
     val ITEMS: List<Item> = listOf(
-        Item("服务", "show_service", "关闭后「我」页不显示服务入口", listOf("settings_service", "settings_mm_service")),
+        Item("服务", "show_service", "关闭后「我」页不显示服务（8.0.80 中显示为「支付」）", listOf("settings_mm_wallet", "settings_service", "settings_mm_service")),
         Item("收藏", "show_favorite", "关闭后「我」页不显示收藏", listOf("settings_mm_favorite")),
         Item("朋友圈", "show_sns", "关闭后「我」页不显示朋友圈", listOf("settings_my_album")),
         Item("视频号", "show_finder", "关闭后「我」页不显示视频号", listOf("settings_my_finder_album", "settings_my_finder_and_biz")),
-        Item("作品", "show_finder_work", "关闭后「我」页不显示作品", listOf("settings_my_finder_work")),
+        Item("作品", "show_finder_work", "关闭后「我」页不显示作品（部分版本没有该入口）", listOf("settings_my_finder_work")),
         Item("订单与卡包", "show_cardpackage", "关闭后「我」页不显示订单与卡包", listOf("settings_mm_cardpackage")),
-        Item("小店与卡包", "show_cardpackage_new", "关闭后「我」页不显示小店与卡包", listOf("settings_mm_cardpackage_new")),
+        Item("小店与卡包", "show_cardpackage_new", "关闭后「我」页不显示小店与卡包（8.0.80 中显示为「卡包」）", listOf("settings_mm_cardpackage_new")),
         Item("表情", "show_emoji_store", "关闭后「我」页不显示表情", listOf("settings_emoji_store"))
     )
 
