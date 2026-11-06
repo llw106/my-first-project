@@ -407,16 +407,56 @@ private class SnsAntiRecallHooker(
             val newObject = parseSnsObject(newBytes) ?: return null
             val oldComments = commentList(oldObject)
             val newComments = commentList(newObject)
-            if (oldComments.isEmpty()) return null
-            val newKeys = newComments.mapTo(LinkedHashSet()) { commentKey(it) }
-            val restored = oldComments.filter { old ->
-                if (MomentsFakeInteractionNodeIdentity.isFakeCommentNode(old)) {
-                    return@filter false
-                }
-                val key = commentKey(old)
-                key !in newKeys && markCommentDeleted(old)
+            val mark = commentCustomMarkText()
+
+            // 旧版本把标记写进了正文，这里顺手洗掉。
+            // 不洗的话微信会把库里的脏正文当正常评论再上报，标记就永久留着。
+            var cleaned = 0
+            for (comment in newComments) {
+                val field = commentContentField(comment) ?: continue
+                val text = stringField(comment, field)
+                if (!text.startsWith(mark)) continue
+                val stripped = text.removePrefix(mark).trimStart()
+                if (stripped.isEmpty()) continue
+                if (KavaReflector.writeField(comment, field, stripped)) cleaned++
             }
-            if (restored.isEmpty()) return null
+
+            if (oldComments.isEmpty()) {
+                return if (cleaned > 0) serializeSnsObject(newObject) else null
+            }
+
+            // 只有「本次上报条数比库里少」才可能是删除。
+            // 新增评论、编辑评论、按条增量上报，条数都不变或变多，这些情况一律不动——
+            // 以前不看条数，把整份旧评论都判成「已删除」，就是这次满屏 [已删除] 的原因。
+            val missing = oldComments.size - newComments.size
+            if (missing <= 0) {
+                if (cleaned > 0) {
+                    HLog.e("[Hchat:SnsAntiRecall] 已清理 $cleaned 条历史 [已删除] 标记")
+                    return serializeSnsObject(newObject)
+                }
+                return null
+            }
+
+            val newIds = newComments.mapTo(HashSet()) { commentKey(it) }
+            val newTexts = newComments.mapTo(HashSet()) { commentTextKey(it) }
+            // 最多只补差额，绝不会把「全部旧评论」一起加回来。
+            val restored = ArrayList<Any>(missing)
+            for (old in oldComments) {
+                if (restored.size >= missing) break
+                if (MomentsFakeInteractionNodeIdentity.isFakeCommentNode(old)) continue
+                // 先按服务端/本地 id 对，空 id 时再按「去掉标记后的正文」对一次。
+                if (commentKey(old) in newIds) continue
+                val textKey = commentTextKey(old)
+                if (textKey.isNotEmpty() && textKey in newTexts) continue
+                if (markCommentDeleted(old)) restored.add(old)
+            }
+            if (restored.isEmpty()) {
+                if (cleaned > 0) {
+                    HLog.e("[Hchat:SnsAntiRecall] 已清理 $cleaned 条历史 [已删除] 标记")
+                    return serializeSnsObject(newObject)
+                }
+                return null
+            }
             newComments.addAll(restored)
             HLog.e(
                 "[Hchat:SnsAntiRecall] 评论防撤回命中：恢复 ${restored.size} 条被删评论" +
@@ -428,6 +468,16 @@ private class SnsAntiRecallHooker(
             HLog.e("[Hchat:SnsAntiRecall] 合并朋友圈评论失败: ${e.message}", e)
             null
         }
+    }
+
+    /** 正文比对用的 key：去掉已有的标记，避免修好之后旧脏数据继续被判成删除。 */
+    private fun commentTextKey(comment: Any): String {
+        val contentField = commentContentField(comment) ?: return ""
+        val raw = stringField(comment, contentField)
+            .removePrefix(commentCustomMarkText())
+            .trimStart()
+        if (raw.isBlank()) return ""
+        return "text:" + stringField(comment, "d") + ":" + raw
     }
 
     private fun parseSnsObject(bytes: ByteArray): Any? {
