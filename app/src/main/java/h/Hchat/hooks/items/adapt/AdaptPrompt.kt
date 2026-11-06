@@ -71,16 +71,42 @@ private object AdaptPrompt {
                 // 这里不能提前把 promptedThisProcess 置 true：微信被推送/服务在后台
                 // 拉起时 onResume 也会走，那时窗口不可见，一旦置位本次进程就再也不弹了。
                 attempting = true
-                // 等首屏稳定再弹，避免和微信自己的启动动画抢焦点。
+                // 不再等 1.8 秒：maybePrompt 内部会等「窗口真正可见」，
+                // 先立刻试一次，首次弹窗时间就从「启动后 +1.8s」压到「窗口出现即为准」。
                 runCatching {
-                    activity.window.decorView.postDelayed({ maybePrompt(activity) }, 1800L)
+                    activity.window.decorView.postDelayed({ maybePrompt(activity) }, 150L)
                 }.onFailure { maybePrompt(activity) }
             }
         })
-        HLog.i("$TAG 安装后适配提醒已安装 (LauncherUI.onResume)")
+
+        // 窗口获得焦点 = 冷启动真正结束。这是最快的触发点，
+        // 比在 onResume 之后轮询 hasWindowFocus() 快得多（不必等下一次轮询）。
+        val onFocus = runCatching {
+            launcher.getDeclaredMethod("onWindowFocusChanged", java.lang.Boolean.TYPE)
+        }.getOrNull() ?: runCatching {
+            launcher.getMethod("onWindowFocusChanged", java.lang.Boolean.TYPE)
+        }.getOrNull()
+        if (onFocus != null) {
+            runCatching {
+                HookRegistry.get().hook(onFocus, object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        if (promptedThisProcess) return
+                        if (param.args?.getOrNull(0) != true) return
+                        val activity = param.thisObject as? Activity ?: return
+                        if (!launcher.isInstance(activity)) return
+                        maybePrompt(activity)
+                    }
+                })
+            }.onFailure { HLog.e("$TAG onWindowFocusChanged 挂载失败: ${it.message}", it) }
+            HLog.i("$TAG 已挂 onWindowFocusChanged（窗口获得焦点即弹）")
+        }
+        HLog.i("$TAG 安装后适配提醒已安装 (LauncherUI.onResume + onWindowFocusChanged)")
     }
 
     private fun maybePrompt(activity: Activity, attempt: Int = 0) {
+        // 两条触发链（onResume 和 onWindowFocusChanged）可能同时进来，
+        // 抢到的那条弹完就把 promptedThisProcess 置位，另一条在这里直接退出。
+        if (promptedThisProcess) return
         if (activity.isFinishing) {
             attempting = false
             return
@@ -99,15 +125,15 @@ private object AdaptPrompt {
             val visible = activity.hasWindowFocus() &&
                 runCatching { activity.window.decorView.isShown }.getOrDefault(false)
             if (!visible) {
-                if (attempt < 30) {
+                if (attempt < 150) {
                     runCatching {
-                        activity.window.decorView.postDelayed({ maybePrompt(activity, attempt + 1) }, 1000L)
+                        activity.window.decorView.postDelayed({ maybePrompt(activity, attempt + 1) }, 200L)
                     }.onFailure {
                         HLog.i("$TAG 窗口不可见且无法排重试 ($attempt)")
                         attempting = false
                     }
                 } else {
-                    HLog.i("$TAG 窗口 30 秒内一直不可见，等下次回到前台再提示")
+                    HLog.i("$TAG 窗口 30 秒内（150 次）一直不可见，等下次回到前台再提示")
                     attempting = false
                 }
                 return
