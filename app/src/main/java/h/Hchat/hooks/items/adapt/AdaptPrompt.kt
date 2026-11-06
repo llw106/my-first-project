@@ -47,6 +47,13 @@ object AdaptPrompt {
     /** 同一个 ClassLoader 只挂一次：入口处会提前挂，Feature 安装时再进来就是空跑。 */
     private val hookedLoaders = Collections.newSetFromMap(ConcurrentHashMap<ClassLoader, Boolean>())
 
+    /**
+     * 装 Hook 时的安装代次。HookRegistry.unhookAll() 会把代次 +1，
+     * 用它判断「之前挂的回调还在不在」，避免 Feature 安装时重复挂一份。
+     */
+    @Volatile
+    private var installedGeneration = Long.MIN_VALUE
+
     /** 已经在「等窗口可见 → 弹窗」的流程里，防止多次 onResume 叠加重试链。 */
     @Volatile
     private var attempting = false
@@ -56,7 +63,11 @@ object AdaptPrompt {
         // Feature 安装时还会再调一次，第二次必须是空跑。
         if (!hookedLoaders.add(classLoader)) return
         val ok = runCatching { installInner(classLoader) }.getOrDefault(false)
-        if (!ok) hookedLoaders.remove(classLoader)
+        if (ok) {
+            installedGeneration = HookRegistry.get().installationGeneration()
+        } else {
+            hookedLoaders.remove(classLoader)
+        }
     }
 
     /**
@@ -65,6 +76,11 @@ object AdaptPrompt {
      * 否则本进程的适配提醒就永久失效了。
      */
     fun installForce(classLoader: ClassLoader) {
+        // 只在「Hook 已被 unhookAll() 卸掉」或「压根没装成」时才重挂。
+        // 不加这层判断的话，每次 Feature 安装都会再多挂一份回调，
+        // 日志表现为同进程出现多次「安装后适配提醒已安装」。
+        val generation = HookRegistry.get().installationGeneration()
+        if (hookedLoaders.contains(classLoader) && installedGeneration == generation) return
         hookedLoaders.remove(classLoader)
         install(classLoader)
     }
