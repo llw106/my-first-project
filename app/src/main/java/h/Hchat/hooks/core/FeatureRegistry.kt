@@ -45,6 +45,7 @@ import h.Hchat.hooks.items.moments.MomentsPostNotificationFeature
 import h.Hchat.hooks.items.moments.RemoveMomentsAdsFeature
 import h.Hchat.hooks.items.moments.SnsAntiRecallFeature
 import h.Hchat.hooks.items.moments.MomentsUploadTailFeature
+import h.Hchat.hooks.items.moments.MomentsVideoNoAutoPlayFeature
 import h.Hchat.hooks.items.momentsfake.MomentsFakeInteractionFeature
 import h.Hchat.hooks.items.multirecall.MultiRecallFeature
 import h.Hchat.hooks.items.adapt.AdaptPromptFeature
@@ -145,6 +146,7 @@ object FeatureRegistry {
             .register(GroupChatLabelFeature())
             .register(GroupLeaveMonitorFeature())
             .register(RemoveMomentsAdsFeature())
+            .register(MomentsVideoNoAutoPlayFeature())
             .register(EditMessageFeature())
             .register(EmojiSaveFeature())
             .register(VoicePreviewFeature())
