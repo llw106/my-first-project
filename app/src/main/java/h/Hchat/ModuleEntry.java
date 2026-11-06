@@ -421,7 +421,7 @@ public class ModuleEntry implements IXposedHookLoadPackage {
 
             // 0.1 微信包体变了、或 Hchat 自己换了包，就清掉上一版留下的定位缓存
             //（白名单，业务数据不动）。必须在任何 DexKit finder 读缓存之前执行。
-            DexCacheJanitor.INSTANCE.install(hostContext, resolveHostClassLoader(hostContext, lpparam), moduleContext);
+            DexCacheJanitor.INSTANCE.install(hostContext, resolveHostClassLoader(hostContext, lpparam));
             ConfigStore configStore = new ConfigStore(hostContext);
 
             ModuleResourceMenuFallback.INSTANCE.install(resolveHostClassLoader(hostContext, lpparam));

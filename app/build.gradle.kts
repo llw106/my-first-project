@@ -20,6 +20,9 @@ android {
         versionCode = autoVersionCode
         versionName = autoVersionName
 
+        // 每次构建都不同：Hchat 换包时用它让「适配状态 / 定位缓存」失效。
+        buildConfigField("long", "BUILD_TIME", "${System.currentTimeMillis()}L")
+
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

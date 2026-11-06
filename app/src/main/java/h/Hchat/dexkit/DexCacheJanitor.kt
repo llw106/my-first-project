@@ -4,6 +4,7 @@ import android.content.Context
 import h.Hchat.hooks.api.runtime.WeChatVersionApi
 import h.Hchat.preferences.HchatStorage
 import h.Hchat.utils.HLog
+import h.Hchat.utils.ModuleIdentity
 
 /**
  * 微信包体变化后清理「定位缓存」。
@@ -72,12 +73,12 @@ object DexCacheJanitor {
      *   · 微信被重装/升级/降级
      *   · Hchat 自己出了新包
      */
-    fun install(context: Context, classLoader: ClassLoader, moduleContext: Context? = null) {
+    fun install(context: Context, classLoader: ClassLoader) {
         runCatching {
             val wechatKey = WeChatVersionApi.buildCacheKey(context, classLoader)
             if (wechatKey.isEmpty()) return
 
-            val hchatTag = moduleTag(moduleContext)
+            val hchatTag = ModuleIdentity.tag(context)
             val runtime = "$wechatKey|hchat=$hchatTag"
 
             val state = HchatStorage.preferences(context, STATE_PREFS)
@@ -95,16 +96,6 @@ object DexCacheJanitor {
             state.edit().putString(KEY_RUNTIME, runtime).apply()
             HLog.i("$TAG 包体或模块版本变化，已清理 $cleared 个定位缓存（hchat=$hchatTag）")
         }.onFailure { HLog.e("$TAG 清理失败: ${it.message}", it) }
-    }
-
-    /** 模块自身的「版本名/安装时间」，用来感知 Hchat 自己换了包。 */
-    private fun moduleTag(moduleContext: Context?): String {
-        if (moduleContext == null) return ""
-        return runCatching {
-            val info = moduleContext.packageManager.getPackageInfo(moduleContext.packageName, 0)
-            val installed = info.applicationInfo?.let { java.io.File(it.sourceDir).lastModified() } ?: 0L
-            "${info.versionName.orEmpty()}/$installed"
-        }.getOrDefault("")
     }
 
     /** 扫 FastKV 目录（dataDir/Hchat），按白名单挑出定位缓存；不猜名字，只认落盘文件。 */

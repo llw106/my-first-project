@@ -3,6 +3,7 @@ package h.Hchat.hooks.items.adapt
 import android.content.Context
 import h.Hchat.hooks.api.runtime.WeChatVersionApi
 import h.Hchat.preferences.HchatStorage
+import h.Hchat.utils.ModuleIdentity
 
 /**
  * 「微信包体变了就要重新适配」的状态记录。
@@ -22,26 +23,12 @@ object AdaptState {
     private const val KEY_FAILED = "adapted.failed"
     private const val KEY_SUMMARY = "adapted.summary"
 
-    /** 由 AdaptPrompt 安装时注入的「Hchat 自身身份」，让适配状态随模块换包一起失效。 */
-    @Volatile
-    var moduleTag: String = ""
-
     fun prefs(context: Context) = HchatStorage.preferences(context, PREFS)
-
-    /** Hchat 自己的「版本名/安装时间」，换包即变。 */
-    fun hchatTag(moduleContext: Context?): String {
-        if (moduleContext == null) return ""
-        return runCatching {
-            val info = moduleContext.packageManager.getPackageInfo(moduleContext.packageName, 0)
-            val installed = info.applicationInfo?.let { java.io.File(it.sourceDir).lastModified() } ?: 0L
-            "${info.versionName.orEmpty()}/$installed"
-        }.getOrDefault("")
-    }
 
     fun runtimeKey(context: Context, classLoader: ClassLoader): String {
         val base = runCatching { WeChatVersionApi.buildCacheKey(context, classLoader) }.getOrDefault("")
         if (base.isEmpty()) return base
-        return "$base|hchat=$moduleTag"
+        return "$base|hchat=${ModuleIdentity.tag(context)}"
     }
 
     fun adaptedKey(context: Context): String =

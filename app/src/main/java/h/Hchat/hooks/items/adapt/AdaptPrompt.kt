@@ -52,7 +52,6 @@ private object AdaptPrompt {
         currentHolder = context.dexBridgeHolder()
         currentDexFinder = context.dexFinder()
         currentDexKit = context.dexKitBridge()
-        AdaptState.moduleTag = AdaptState.hchatTag(context.moduleContext())
         val classLoader = context.hostClassLoader()
         val launcher = runCatching { classLoader.loadClass("com.tencent.mm.ui.LauncherUI") }
             .getOrNull()
