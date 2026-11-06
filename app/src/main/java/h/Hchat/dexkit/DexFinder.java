@@ -2967,9 +2967,19 @@ public class DexFinder {
     }
 
     public void resolveLocalMessageApi() {
-        if (ensureSnapshotLoaded()) return;
+        // 缓存命中不等于定位完整：createTime 一旦被缓存成空，之前会永久不再补定位，
+        // 结果就是"防撤回提示永远插不进去"。所以这里只把"createTime 已有"当成完成。
+        if (ensureSnapshotLoaded() && localMessageCreateTimeMethod != null) return;
         try {
             if (hasLocalMessageApi() && localMessageCreateTimeMethod != null) return;
+            // 缓存里缺 createTime 时先用锚点轻量补一次，避免每次启动都全量扫 dex。
+            if (localMessageCreateTimeMethod == null) {
+                localMessageCreateTimeMethod = findCreateTimeBySysmsgAnchor();
+                if (localMessageCreateTimeMethod != null) {
+                    h.Hchat.utils.HLog.e(TAG + " 本地消息 createTime 缓存缺失，已用锚点补定位: "
+                            + methodName(localMessageCreateTimeMethod));
+                }
+            }
             int candidateCount = resolveLocalMessageApiBySignature();
             logDetail("本地消息API: insert=" + methodName(localMessageInsertMethod)
                     + " system=" + methodName(localSystemMessageMethod)
@@ -2978,6 +2988,14 @@ public class DexFinder {
                     + " ctor=" + (localMessageCtor != null ? localMessageCtor.getParameterTypes().length : -1));
             if (!hasLocalMessageApi()) {
                 h.Hchat.utils.HLog.e(TAG + " 本地消息API未找到: candidates=" + candidateCount
+                        + " key=" + shortKey(runtimeCacheKey));
+            }
+            if (localMessageCreateTimeMethod == null) {
+                h.Hchat.utils.HLog.e(TAG + " 本地消息 createTime 方法未定位到（撤回提示无法插入）: insert="
+                        + methodName(localMessageInsertMethod)
+                        + " system=" + methodName(localSystemMessageMethod)
+                        + " msg=" + (localMessageClass != null ? localMessageClass.getName() : "null")
+                        + " ctor=" + (localMessageCtor != null ? localMessageCtor.getParameterTypes().length : -1)
                         + " key=" + shortKey(runtimeCacheKey));
             }
         } catch (Throwable e) {
@@ -4928,6 +4946,11 @@ public class DexFinder {
             editor.putBoolean(LOCATOR_MSG_DESC_COMPLETE, msgDescLocatorResolved);
             editor.putBoolean(LOCATOR_PROTOBUF_COMPLETE, protobufLocatorResolved);
             boolean snapshotReady = !cacheDescriptorInvalid;
+            // 缺 createTime 说明这次的缓存是不完整的，别把"已经重试过"的标记留下，
+            // 否则下次启动不会再补，防撤回提示会一直插不进去。
+            if (localMessageCreateTimeMethod == null) {
+                editor.remove(CACHE_INCOMPLETE_MARK);
+            }
             editor.putString(CACHE_SNAPSHOT_VERSION_KEY,
                     snapshotReady ? CACHE_SNAPSHOT_VERSION : "");
             editor.putBoolean(CACHE_COMPLETE, snapshotReady);
