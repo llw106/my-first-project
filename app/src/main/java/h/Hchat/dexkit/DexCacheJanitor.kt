@@ -106,7 +106,10 @@ object DexCacheJanitor {
             .filter { it.isFile }
             .mapNotNull { file ->
                 val suffix = SUFFIXES.firstOrNull { file.name.endsWith(it) } ?: return@mapNotNull null
-                file.name.removeSuffix(suffix)
+                // 磁盘上是 cfg_xxx（去特征后的名字），这里还原成业务层的 Hchat_xxx。
+                file.name.removeSuffix(suffix).let { disk ->
+                    if (disk.startsWith("cfg_")) "Hchat_" + disk.removePrefix("cfg_") else disk
+                }
             }
             .filter { isLocatorCache(it) }
             .distinct()

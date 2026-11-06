@@ -95,7 +95,7 @@ public class NativeLibraryLoader {
         String moduleApk = getModuleApkPath(moduleClassLoader);
         if (moduleApk == null || moduleApk.length() == 0) return null;
         String abi = "arm64-v8a";
-        File dir = new File(new File(ctx.getCacheDir(), "Hchat_termux"), abi);
+        File dir = new File(new File(ctx.getCacheDir(), "cfg_termux"), abi);
         dir.mkdirs();
         File dest = new File(dir, TERMUX_SO);
         try (ZipFile apk = new ZipFile(moduleApk)) {
@@ -180,7 +180,7 @@ public class NativeLibraryLoader {
         String moduleApk = getModuleApkPath(moduleClassLoader);
         String abi = "arm64-v8a";
         String entryPath = "lib/" + abi + "/" + soName;
-        File cacheDir = new File(new File(ctx.getCacheDir(), "Hchat_native"), abi);
+        File cacheDir = new File(new File(ctx.getCacheDir(), "cfg_native"), abi);
 
         try {
             if (moduleApk == null || moduleApk.length() == 0) {

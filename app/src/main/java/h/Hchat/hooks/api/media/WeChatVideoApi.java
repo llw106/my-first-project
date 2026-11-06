@@ -315,7 +315,7 @@ public final class WeChatVideoApi {
         File direct = new File(path);
         if (direct.isFile()) return direct.getAbsolutePath();
 
-        File dir = new File(hostContext.getCacheDir(), "Hchat_message_video");
+        File dir = new File(hostContext.getCacheDir(), "cfg_message_video");
         if (!dir.isDirectory() && !dir.mkdirs()) return "";
         File target = new File(dir, "video_" + Integer.toHexString(path.hashCode()) + ".mp4");
         if (target.isFile() && target.length() > 0L) return target.getAbsolutePath();
@@ -490,7 +490,7 @@ public final class WeChatVideoApi {
             bitmap = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
             if (bitmap == null) return "";
 
-            File dir = new File(hostContext.getCacheDir(), "Hchat_media");
+            File dir = new File(hostContext.getCacheDir(), "cfg_media");
             if (!dir.isDirectory() && !dir.mkdirs()) return "";
             File file = new File(dir, "video_thumb_" + Integer.toHexString(videoPath.hashCode()) + ".jpg");
             out = new FileOutputStream(file);

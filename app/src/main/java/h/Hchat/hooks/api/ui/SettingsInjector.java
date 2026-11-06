@@ -89,7 +89,7 @@ public class SettingsInjector {
         this.classLoader = classLoader;
         this.dex = dex;
         this.entrySettings = entrySettings;
-        this.dexCacheDir = new File(context.getCacheDir(), "Hchat_proxy_classes");
+        this.dexCacheDir = new File(context.getCacheDir(), "cfg_proxy_classes");
         this.dexCacheDir.mkdirs();
     }
 

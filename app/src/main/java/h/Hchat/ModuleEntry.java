@@ -41,6 +41,7 @@ import org.luckypray.dexkit.DexKitBridge;
 import org.luckypray.dexkit.query.FindMethod;
 import org.luckypray.dexkit.query.matchers.MethodMatcher;
 
+import java.io.File;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -425,8 +426,44 @@ public class ModuleEntry implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * 清掉旧版本留在宿主 cache 目录下的 Hchat_* 临时目录。
+     * 这些目录就在微信私有目录里、名字直接点了模块，是最容易被扫到的痕迹之一。
+     * 只是一次 listFiles，进程启动时执行，开销可以忽略。
+     */
+    private static void cleanLegacyTempDirs(Context hostContext) {
+        try {
+            File cacheDir = hostContext.getCacheDir();
+            File[] children = cacheDir == null ? null : cacheDir.listFiles();
+            if (children == null) return;
+            for (File child : children) {
+                if (child == null) continue;
+                if (!child.getName().startsWith("Hchat_")) continue;
+                deleteRecursively(child);
+            }
+        } catch (Throwable e) {
+            HLog.e(TAG + " 清理旧临时目录失败", e);
+        }
+    }
+
+    private static void deleteRecursively(File target) {
+        if (target == null || !target.exists()) return;
+        if (target.isDirectory()) {
+            File[] children = target.listFiles();
+            if (children != null) {
+                for (File child : children) deleteRecursively(child);
+            }
+        }
+        try {
+            target.delete();
+        } catch (Throwable ignored) {
+        }
+    }
+
     private void initModule(Context hostContext, XC_LoadPackage.LoadPackageParam lpparam) {
         try {
+            // 0. 清掉老版本留在 cache 目录下的带模块名的临时目录（现在都叫 cfg_*）。
+            cleanLegacyTempDirs(hostContext);
             // 0. 注册宿主进程的内存压力回调：微信报内存紧张时，
             // 模块里那些可重建的缓存（缩略图、头像位图、节流表）才会提前释放。
             MemoryTrimController.install(hostContext);

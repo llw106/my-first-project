@@ -54,8 +54,10 @@ class RemoveMomentsAdsFeature : BaseFeature() {
         private fun prefsFor(context: Context): SharedPreferences {
             val dir = HchatStorage.storageDir(context)
             val name = RemoveMomentsAdsSettings.PREFS_NAME
+            // 落盘名是去特征后的 cfg_xxx，不能拿业务名直接拼文件名。
+            val disk = HchatStorage.diskFileName(name)
             val stamp = FAST_KV_SUFFIXES.maxOfOrNull { suffix ->
-                File(dir, name + suffix).lastModified()
+                File(dir, disk + suffix).lastModified()
             } ?: 0L
             synchronized(stampLock) {
                 if (stamp != lastStamp) {

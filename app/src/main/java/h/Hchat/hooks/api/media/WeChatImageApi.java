@@ -258,7 +258,7 @@ public final class WeChatImageApi {
         File direct = new File(path);
         if (direct.isFile()) return direct.getAbsolutePath();
 
-        File dir = new File(hostContext.getCacheDir(), "Hchat_message_image");
+        File dir = new File(hostContext.getCacheDir(), "cfg_message_image");
         if (!dir.isDirectory() && !dir.mkdirs()) return "";
         File target = new File(dir, "image_" + Integer.toHexString(path.hashCode()) + ".jpg");
         if (target.isFile() && target.length() > 0L) return target.getAbsolutePath();
