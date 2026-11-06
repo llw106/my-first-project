@@ -6,7 +6,6 @@ import h.Hchat.BuildConfig
 import h.Hchat.hooks.items.script.ScriptPluginRuntime
 import h.Hchat.hooks.items.script.market.PluginMarketSettings
 import h.Hchat.utils.HLog
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.security.MessageDigest
@@ -43,9 +42,7 @@ object ProotEnvironment {
     )
 
     private const val WECHAT_APK_MOUNT = "/wechat/base.apk"
-    private const val WECHAT_MOUNT_DIR = "/wechat"
-
-    private const val ENV_DIR = "proot_env"
+        private const val ENV_DIR = "proot_env"
     private const val SANDBOX_DIR = "sandbox"
     private const val BIN_DIR = "bin"
     private const val HOME_DIR = "home"

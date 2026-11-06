@@ -72,7 +72,7 @@ public class RedPacketHooker {
         this.hostContext = context;
         this.classLoader = classLoader;
         this.dexFinder = dexFinder;
-        this.settings = new RedPacketSettings(classLoader, context);
+        this.settings = new RedPacketSettings(context);
         this.ruleResolver = new RedPacketRuleResolver(settings);
         this.state = new RedPacketState();
         this.stats = new RedPacketStats(context, state, this::logx);

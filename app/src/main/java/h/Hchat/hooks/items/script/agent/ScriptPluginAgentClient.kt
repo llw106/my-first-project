@@ -7,7 +7,6 @@ import android.os.SystemClock
 import android.util.Base64
 import h.Hchat.utils.HLog
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray

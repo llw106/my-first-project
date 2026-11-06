@@ -27,9 +27,6 @@
  *****************************************************************************/
 package bsh;
 import java.io.IOException;
-import java.io.Reader;
-import java.util.ArrayList;
-import java.util.List;
 
 /** Token Manager. */
 @SuppressWarnings ("unused")

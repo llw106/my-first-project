@@ -6,7 +6,6 @@ import android.text.TextUtils
 import h.Hchat.preferences.HchatStorage
 
 class RedPacketSettings @JvmOverloads constructor(
-    private val classLoader: ClassLoader,
     private val hostContext: Context? = null
 ) {
     fun getBoolean(key: String, def: Boolean): Boolean {

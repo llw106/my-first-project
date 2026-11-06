@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import android.view.View
 import android.widget.Button
 import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import h.Hchat.hooks.core.BaseFeature
 import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.hooks.core.HookRegistry

@@ -2,7 +2,6 @@ package h.Hchat.hooks.api.message;
 
 import android.text.TextUtils;
 
-import h.Hchat.event.EventBus;
 import h.Hchat.event.Events;
 import h.Hchat.hooks.api.contact.WeChatAccountApi;
 import h.Hchat.hooks.api.model.WeChatMessage;

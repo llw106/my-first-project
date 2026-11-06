@@ -4,12 +4,10 @@ import android.app.Activity
 import android.os.Handler
 import android.os.Looper
 import de.robv.android.xposed.XC_MethodHook
-import h.Hchat.dexkit.DexFinder
 import h.Hchat.hooks.core.BaseFeature
 import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.hooks.core.HookRegistry
 import h.Hchat.utils.HLog
-import org.luckypray.dexkit.DexKitBridge
 
 private const val TAG = "[Hchat:Adapt]"
 
@@ -49,9 +47,6 @@ private object AdaptPrompt {
     private var attempting = false
 
     fun install(context: FeatureContext) {
-        currentHolder = context.dexBridgeHolder()
-        currentDexFinder = context.dexFinder()
-        currentDexKit = context.dexKitBridge()
         val classLoader = context.hostClassLoader()
         val launcher = runCatching { classLoader.loadClass("com.tencent.mm.ui.LauncherUI") }
             .getOrNull()
@@ -157,15 +152,12 @@ private object AdaptPrompt {
     private fun startAdapt(activity: Activity) {
         val context = activity.applicationContext
         val classLoader = activity.classLoader
-        val holder = currentHolder
-        val dexKit = currentDexKit
-        val fallback = currentDexFinder
         val handler = Handler(Looper.getMainLooper())
         val progress = AdaptDialog.showProgress(activity)
 
         Thread {
             val result = runCatching {
-                AdaptScan.run(context, classLoader, holder, dexKit, fallback) { index, item ->
+                AdaptScan.run(context, classLoader) { index, item ->
                     handler.post { progress?.update(index, item) }
                 }
             }.onFailure { HLog.e("$TAG 扫描异常: ${it.message}", it) }.getOrNull()
@@ -188,8 +180,7 @@ private object AdaptPrompt {
                     context = context,
                     classLoader = classLoader,
                     versionName = AdaptState.versionName(context),
-                    summary = result.summary(),
-                    failed = result.failed
+                    summary = result.summary()
                 )
                 val message = if (result.ok) {
                     "共 ${AdaptScan.TOTAL} 项全部定位成功。\n${result.myTab}\n\n重启微信后生效。"
@@ -212,15 +203,4 @@ private object AdaptPrompt {
         HLog.i("$TAG 用户确认重启微信")
         runCatching { android.os.Process.killProcess(android.os.Process.myPid()) }
     }
-
-    /** 由 Feature 安装时注入，供扫描线程取 DexKit。 */
-    @Volatile
-    var currentHolder: h.Hchat.dexkit.DexBridgeHolder? = null
-
-    /** 没有 DexKitBridge 时退回用它（可能是全局单例，会命中缓存）。 */
-    @Volatile
-    var currentDexFinder: DexFinder? = null
-
-    @Volatile
-    var currentDexKit: DexKitBridge? = null
 }

@@ -16,7 +16,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import h.Hchat.hooks.core.BaseFeature
 import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.hooks.core.HookRegistry

@@ -2,7 +2,6 @@ package h.Hchat.hooks.items.hotupdate
 
 import android.content.Context
 import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import h.Hchat.dexkit.DexMethodCache
 import h.Hchat.hooks.core.BaseFeature
 import h.Hchat.hooks.core.FeatureContext

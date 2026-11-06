@@ -60,8 +60,7 @@ object AdaptScan {
 
     data class Result(
         val failed: List<String> = emptyList(),
-        val myTab: String = "",
-        val elapsedMs: Long = 0L
+        val myTab: String = ""
     ) {
         val ok: Boolean get() = failed.isEmpty()
 
@@ -89,9 +88,6 @@ object AdaptScan {
     fun run(
         context: Context,
         classLoader: ClassLoader,
-        holder: DexBridgeHolder?,
-        dexKit: DexKitBridge?,
-        fallbackFinder: DexFinder?,
         onProgress: (index: Int, item: String) -> Unit
     ): Result {
         val started = System.currentTimeMillis()
@@ -100,8 +96,9 @@ object AdaptScan {
         // 先清缓存，再 new 一个干净的 DexFinder：保证 41 项真的跑，而不是命中缓存秒退。
         // 不复用全局单例，是因为它可能在本进程早先已经 loadCache 过，字段里是旧值。
         resetCache(context)
+        val kit = dexKit
         val scanner = runCatching {
-            if (dexKit != null) DexFinder(dexKit, classLoader, context) else fallbackFinder
+            if (kit != null) DexFinder(kit, classLoader, context) else finder
         }.getOrNull()
 
         onProgress(1, "我页条目")
@@ -127,8 +124,8 @@ object AdaptScan {
         }
 
         onProgress(TOTAL, "设置页框架")
-        if (dexKit != null) {
-            runCatching { SettingsDexFinder(dexKit, classLoader, context).resolveAll(false) }
+        if (kit != null) {
+            runCatching { SettingsDexFinder(kit, classLoader, context).resolveAll(false) }
                 .onFailure {
                     HLog.e("$TAG 设置页框架扫描异常: ${it.message}", it)
                     failed.add("设置页框架")
@@ -139,6 +136,6 @@ object AdaptScan {
 
         val elapsed = System.currentTimeMillis() - started
         HLog.i("$TAG 扫描完成 ${elapsed}ms，失败项=[${failed.joinToString(",")}]")
-        return Result(failed, located?.toText().orEmpty(), elapsed)
+        return Result(failed, located?.toText().orEmpty())
     }
 }

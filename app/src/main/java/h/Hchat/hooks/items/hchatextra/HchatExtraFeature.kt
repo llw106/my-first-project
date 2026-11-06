@@ -3351,16 +3351,7 @@ private class HchatExtraHooker(
         return KavaReflector.readField(accessor.fallbackField, source)
     }
 
-    private fun readLong(receiver: Any?, vararg names: String): Long {
-        if (receiver == null) return 0L
-        names.forEach { name ->
-            val value = KavaReflector.readField(receiver, name)
-            if (value is Number) return value.toLong()
-        }
-        return 0L
-    }
-
-    private fun readInt(receiver: Any?, vararg names: String): Int {
+        private fun readInt(receiver: Any?, vararg names: String): Int {
         if (receiver == null) return 0
         names.forEach { name ->
             val value = KavaReflector.readField(receiver, name)

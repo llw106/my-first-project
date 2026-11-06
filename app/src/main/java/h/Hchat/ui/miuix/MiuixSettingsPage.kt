@@ -117,14 +117,10 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.union
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -133,9 +129,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -208,8 +202,6 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import h.Hchat.hooks.api.core.WeChatApis
 import h.Hchat.hooks.api.media.WeChatFavoriteItem
-import h.Hchat.hooks.api.message.WeChatMessageObserveApi
-import h.Hchat.hooks.api.model.ContactLabelBean
 import h.Hchat.hooks.api.model.WeChatContact
 import h.Hchat.hooks.items.adapt.AdaptScan
 import h.Hchat.hooks.items.adapt.AdaptSettingsProvider
@@ -360,9 +352,7 @@ import h.Hchat.hooks.items.protobuf.ProtobufPacketFeature
 import h.Hchat.hooks.items.patblock.PatBlockSettings
 import h.Hchat.hooks.items.profileid.ProfileIdFeature
 import h.Hchat.hooks.items.profileid.ProfileIdSettings
-import h.Hchat.hooks.items.customnickname.CustomNicknameFeature
 import h.Hchat.hooks.items.customnickname.CustomNicknameSettings
-import h.Hchat.hooks.items.profilewxid.ProfileWxidFeature
 import h.Hchat.hooks.items.profilewxid.ProfileWxidSettings
 import h.Hchat.hooks.items.protobuf.ProtobufPacketRuntime
 import h.Hchat.hooks.items.protobuf.ProtobufPacketSettings
@@ -457,7 +447,6 @@ import h.Hchat.preferences.TermsGate
 import h.Hchat.ui.FeatureSettingsProvider
 import h.Hchat.ui.UIRegistry
 import h.Hchat.utils.KavaReflector
-import h.Hchat.utils.KeywordReplacementRule
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import org.json.JSONArray
@@ -534,7 +523,6 @@ private const val PRESS_RELEASE_DELAY_MS = 110L
 private const val RINGTONE_SYSTEM_REQUEST_CODE = 0x48435254
 private const val RINGTONE_FILE_REQUEST_CODE = 0x48435255
 private const val REDPACKET_REPLY_FILE_REQUEST_CODE = 0x48435256
-private const val AUTO_REPLY_FILE_REQUEST_CODE = 0x48435257
 private const val CONFIG_EXPORT_REQUEST_CODE = 0x48435258
 private const val CONFIG_IMPORT_REQUEST_CODE = 0x48435259
 private const val SCHEDULED_TASK_FILE_REQUEST_CODE = 0x4843525A
@@ -21727,10 +21715,7 @@ private fun AdaptMiuixPage(
                                 val result = runCatching {
                                     AdaptScan.run(
                                         context = context,
-                                        classLoader = classLoader,
-                                        holder = AdaptScan.holder,
-                                        dexKit = AdaptScan.dexKit,
-                                        fallbackFinder = AdaptScan.finder
+                                        classLoader = classLoader
                                     ) { index, item ->
                                         mainHandler.post {
                                             progressIndex = index
@@ -21748,8 +21733,7 @@ private fun AdaptMiuixPage(
                                             context = context,
                                             classLoader = classLoader,
                                             versionName = wechatVersion,
-                                            summary = result.summary(),
-                                            failed = result.failed
+                                            summary = result.summary()
                                         )
                                         resultText = if (result.ok) {
                                             "扫描完成：${result.summary()}\n重启微信后生效。"

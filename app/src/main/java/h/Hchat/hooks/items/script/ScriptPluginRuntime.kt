@@ -1712,11 +1712,9 @@ object ScriptPluginRuntime {
                 import h.Hchat.dexkit.DexBridgeHolder;
                 import h.Hchat.dexkit.DexFinder;
                 import h.Hchat.hooks.api.core.WeChatApis;
-                import h.Hchat.hooks.items.script.ScriptDexKitBridge;
                 import h.Hchat.hooks.items.script.ScriptPluginBridge;
                 import h.Hchat.hooks.items.script.ScriptAudioBridge;
                 import h.Hchat.hooks.items.script.ScriptWaBridge;
-                import h.Hchat.hooks.api.model.ContactLabelBean;
                 import h.Hchat.utils.KavaReflector;
                 import java.io.File;
                 import java.io.InputStream;
@@ -1730,10 +1728,7 @@ object ScriptPluginRuntime {
                 import java.util.Set;
                 import java.util.function.Consumer;
                 import java.util.function.Function;
-                import android.content.ContentValues;
-                import android.database.Cursor;
                 import android.view.View;
-                import me.hd.wauxv.data.bean.MsgInfoBean;
                 import me.hd.wauxv.plugin.api.callback.PluginCallBack;
                 import me.yun.silk.AacCodec;
                 import me.yun.silk.SilkCodec;

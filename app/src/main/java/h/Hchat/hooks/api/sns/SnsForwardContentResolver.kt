@@ -13,7 +13,6 @@ import h.Hchat.hooks.core.FeatureContext
 import h.Hchat.hooks.items.scheduledtask.ScheduledTaskContentItem
 import h.Hchat.hooks.items.scheduledtask.ScheduledTaskSettings
 import h.Hchat.utils.KavaReflector
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream

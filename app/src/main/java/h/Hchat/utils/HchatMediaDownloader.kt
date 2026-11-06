@@ -2,7 +2,6 @@ package h.Hchat.utils
 
 import android.content.Context
 import android.net.Uri
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedInputStream
 import java.io.File

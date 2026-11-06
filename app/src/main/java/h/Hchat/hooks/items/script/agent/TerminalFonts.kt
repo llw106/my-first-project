@@ -8,7 +8,6 @@ import android.os.Looper
 import h.Hchat.hooks.items.script.market.PluginMarketSettings
 import h.Hchat.preferences.HchatStorage
 import h.Hchat.utils.HLog
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap

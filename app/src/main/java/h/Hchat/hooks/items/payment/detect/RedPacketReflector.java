@@ -4,7 +4,6 @@ import android.text.TextUtils;
 
 import h.Hchat.utils.KavaReflector;
 
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;

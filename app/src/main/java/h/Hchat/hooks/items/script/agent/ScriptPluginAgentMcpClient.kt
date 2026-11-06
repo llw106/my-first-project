@@ -2,7 +2,6 @@ package h.Hchat.hooks.items.script.agent
 
 import h.Hchat.utils.HchatHttp
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody

@@ -2,7 +2,6 @@ package h.Hchat.hooks.items.chattime
 
 import android.content.SharedPreferences
 import android.view.View
-import android.widget.AbsListView
 import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
 import h.Hchat.dexkit.DexMethodCache

@@ -2,7 +2,6 @@ package h.Hchat.hooks.items.antirecall
 
 import android.content.ContentValues
 import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import h.Hchat.dexkit.DexMethodCache
 import h.Hchat.event.Events
 import h.Hchat.hooks.api.core.WeChatApis
@@ -1138,12 +1137,7 @@ class AntiRecallFeature : BaseFeature() {
             .getBoolean(AntiRecallSettings.KEY_SHOW_NOTICE, AntiRecallSettings.DEFAULT_SHOW_NOTICE)
     }
 
-    private fun short(value: String, max: Int = 120): String {
-        val raw = value.replace('\n', ' ')
-        return if (raw.length <= max) raw else raw.take(max) + "..."
-    }
-
-    companion object {
+        companion object {
         const val ID = "anti_recall"
         private const val TAG = "[Hchat:AntiRecall]"
         private const val MAX_CACHED_MESSAGES = 1000

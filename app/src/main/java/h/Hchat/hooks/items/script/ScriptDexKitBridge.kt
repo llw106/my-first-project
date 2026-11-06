@@ -1,6 +1,5 @@
 package h.Hchat.hooks.items.script
 
-import de.robv.android.xposed.XposedBridge
 import h.Hchat.dexkit.DexBridgeHolder
 import h.Hchat.utils.KavaReflector
 import org.luckypray.dexkit.DexKitBridge

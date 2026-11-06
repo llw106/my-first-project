@@ -7,10 +7,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
-import android.util.AttributeSet
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.View
 import android.widget.FrameLayout
 import android.widget.Toast
 import com.termux.terminal.TerminalSession

@@ -11,7 +11,6 @@ import h.Hchat.event.Events;
 import h.Hchat.hooks.api.contact.WeChatAccountApi;
 import h.Hchat.hooks.api.contact.WeChatContactApi;
 import h.Hchat.hooks.api.core.WeChatApis;
-import h.Hchat.hooks.api.media.WeChatInternalServices;
 import h.Hchat.hooks.api.model.WeChatContact;
 import h.Hchat.hooks.api.model.WeChatMessage;
 import h.Hchat.hooks.api.model.WeChatQuoteMsg;
