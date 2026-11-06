@@ -319,6 +319,7 @@ import h.Hchat.hooks.items.moments.MomentsPostNotificationFeature
 import h.Hchat.hooks.items.moments.MomentsPostNotificationSettings
 import h.Hchat.hooks.items.moments.MomentsUploadTailFeature
 import h.Hchat.hooks.items.moments.MomentsUploadTailSettings
+import h.Hchat.hooks.items.moments.MomentsVideoNoAutoPlayFeature
 import h.Hchat.hooks.items.moments.RemoveMomentsAdsFeature
 import h.Hchat.hooks.items.moments.RemoveMomentsAdsSettings
 import h.Hchat.hooks.items.moments.SnsAntiRecallFeature
@@ -3003,7 +3004,8 @@ private fun practicalFeatureGroups(
                 MomentsFakeLikeSettingsProvider.ID,
                 MomentsFakeCommentSettingsProvider.ID,
                 MomentsFakeForwardSettingsProvider.ID,
-                RemoveMomentsAdsFeature.ID
+                RemoveMomentsAdsFeature.ID,
+                MomentsVideoNoAutoPlayFeature.ID
             )
         ),
         FeatureGroupEntry(
@@ -3719,6 +3721,7 @@ private fun featureSubSearchTerms(featureId: String): List<String> {
         MomentsFakeCommentSettingsProvider.ID -> listOf("朋友圈伪评论", "伪评论[H]", "使用非好友", "群成员", "多选好友", "全选好友", "随机评论", "添加新评论", "评论池", "评论时间", "评论顺序", "隐藏长按菜单", "自定义文本", "清除伪评论")
         MomentsFakeForwardSettingsProvider.ID -> listOf("朋友圈伪转发", "伪转发[H]", "本地朋友圈", "日期", "时间", "重复转发", "隐藏长按菜单", "自定义文本", "清空伪转发", "调试日志")
         RemoveMomentsAdsFeature.ID -> listOf("去除朋友圈广告", "朋友圈广告", "广告屏蔽")
+        MomentsVideoNoAutoPlayFeature.ID -> listOf("朋友圈视频手动播放", "朋友圈视频自动播放", "视频自动播放", "禁止自动播放", "不自动播放", "手动播放", "点了才播")
         MessageBubbleFeature.ID -> listOf("消息气泡", "聊天气泡", "自定义气泡", "左侧气泡", "右侧气泡", "红包气泡", "转账气泡", "系统消息气泡", "浅色模式", "深色模式", "NinePatch", "九宫格")
         ChatTimeStyleFeature.ID -> listOf("会话时间样式", "聊天时间", "微信时间", "自定义时间", "隐藏时间", "时间格式")
         HideChatAvatarFeature.ID -> listOf("隐藏头像", "隐藏自己头像", "隐藏对方头像", "聊天头像", "群聊头像", "私聊头像")
