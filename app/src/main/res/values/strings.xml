@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">密友</string>
+    <string name="xposed_desc">密友：在微信里隐藏指定好友（会话列表 / 通讯录 / 搜索）</string>
+</resources>
