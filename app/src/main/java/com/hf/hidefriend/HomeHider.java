@@ -38,6 +38,8 @@ public final class HomeHider {
 
     private static final Set<String> hookedKeys = new HashSet<>();
 
+    private static volatile boolean dumped = false;
+
     private static final List<List<String>> ANCHORS = Arrays.asList(
             Arrays.asList("MicroMsg.ConversationWithCacheAdapter", "refreshChangedConversation searchArray"),
             Arrays.asList("refreshChangedConversation searchArray"),
@@ -72,6 +74,10 @@ public final class HomeHider {
     private static void runAnalysis(String apkPath, ClassLoader loader) {
         try {
             long start = System.currentTimeMillis();
+            if (!NativeLib.loadDexKit(HomeHider.class.getClassLoader())) {
+                HookEntry.log(TAG + " libdexkit 未加载，跳过 DexKit 查询");
+                return;
+            }
             DexKitBridge bridge = DexKitBridge.createManaged(apkPath, 30000L);
             LinkedHashMap<String, Method> found = new LinkedHashMap<>();
 
@@ -141,6 +147,10 @@ public final class HomeHider {
                     if (!Hidden.enabled()) return;
                     Object result = param.getResult();
                     if (result == null) return;
+                    if (!dumped && Hidden.names().isEmpty()) {
+                        dumped = true;
+                        dumpSample(result);
+                    }
                     try {
                         if (result.getClass().isArray()) {
                             Object filtered = filterArray(result);
@@ -185,6 +195,29 @@ public final class HomeHider {
         Object out = Array.newInstance(component, keep.size());
         for (int i = 0; i < keep.size(); i++) Array.set(out, i, keep.get(i));
         return out;
+    }
+
+    /** 名单为空时打一次会话 username 样本，方便用户抄 wxid。 */
+    private static void dumpSample(Object result) {
+        try {
+            List<String> names = new ArrayList<>();
+            if (result.getClass().isArray()) {
+                int length = Array.getLength(result);
+                for (int i = 0; i < length && names.size() < 20; i++) {
+                    String name = usernameOf(Array.get(result, i));
+                    if (name != null) names.add(name);
+                }
+            } else if (result instanceof List) {
+                for (Object item : (List<?>) result) {
+                    if (names.size() >= 20) break;
+                    String name = usernameOf(item);
+                    if (name != null) names.add(name);
+                }
+            }
+            HookEntry.log(TAG + " 会话样本(" + names.size() + "条)，挑一条填进名单: " + names);
+        } catch (Throwable t) {
+            HookEntry.log(TAG + " dump 失败: " + t);
+        }
     }
 
     private static List<?> filterList(List<?> list) {
