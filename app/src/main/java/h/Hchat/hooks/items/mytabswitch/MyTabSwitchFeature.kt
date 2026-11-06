@@ -137,20 +137,11 @@ private class MyTabSwitchHooker(
             })
             HLog.i("$TAG 查询兜底 Hook 已安装 (g0.h)")
         }.onFailure { HLog.e("$TAG 查询兜底 Hook 失败: ${it.message}", it) }
+// 兜底 2：「朋友圈」条目被摘掉后，MoreTabUI.s1() 里 h("settings_my_album") 会拿到 null，
+// 接着在 null 上调用方法就会 NPE。但 s1 同时负责刷新「设置」等入口的 NewTip 状态，
+// 一旦跳过它，「设置」就不显示了。所以这里【不 hook s1】，改由上面的 g0.h 影子表兜底：
+// s1 取朋友圈时拿到被摘下的原对象，既能正常执行完，也不会把朋友圈加回列表。
 
-        // 兜底 2：MoreTabUI.s1() 刷新「我」页各条目的 NewTip 状态（「设置」也在其中）。
-        // 只有真的摘掉了「朋友圈」条目时才跳过它（s1 内部会强转朋友圈条目），
-        // 无条件跳过会连带其它条目的状态刷新，导致「设置」等入口不显示。
-        runCatching {
-            val moreTab = context.hostClassLoader().loadClass("com.tencent.mm.ui.MoreTabUI")
-            val s1 = moreTab.getDeclaredMethod("s1")
-            HookRegistry.get().hook(s1, object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    if (shadow.containsKey(MyTabSwitchSettings.ALBUM_KEY)) param.result = null
-                }
-            })
-            HLog.i("$TAG 红点刷新跳过 Hook 已安装 (MoreTabUI.s1)")
-        }.onFailure { HLog.i("$TAG 红点刷新跳过未安装: ${it.message}") }
 
         installed = true
         return true
