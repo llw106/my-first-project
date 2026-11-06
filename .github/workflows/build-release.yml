@@ -121,6 +121,8 @@ jobs:
             tail -80 /tmp/release-build.log || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # 同时把关键错误行以 annotation 形式输出，便于 API 直接读取
+          grep -nE "What went wrong|^e: |error:|Missing class|Caused by|FAILURE:" /tmp/release-build.log | head -12 | sed 's/%/%25/g' | while IFS= read -r l; do echo "::error::$l"; done
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
