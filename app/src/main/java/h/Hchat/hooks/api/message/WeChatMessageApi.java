@@ -111,13 +111,13 @@ public final class WeChatMessageApi {
     private static final ExecutorService THUMB_PREFETCH_EXECUTOR =
             new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS,
                     new ArrayBlockingQueue<>(MAX_CACHED_THUMBS), r -> {
-                        Thread thread = new Thread(r, "HchatXmlThumbPrefetch");
+                        Thread thread = new Thread(r, "pool-6-thread-1");
                         thread.setDaemon(true);
                         return thread;
                     });
     private static final ScheduledExecutorService LOCAL_SEND_FALLBACK_EXECUTOR =
             Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread thread = new Thread(r, "HchatLocalSendFallback");
+                Thread thread = new Thread(r, "pool-6-thread-2");
                 thread.setDaemon(true);
                 return thread;
             });

@@ -15,6 +15,7 @@ import h.Hchat.hooks.core.FeatureContext;
 import h.Hchat.hooks.core.DexInstallScheduler;
 import h.Hchat.hooks.core.FeatureManager;
 import h.Hchat.hooks.core.HookRegistry;
+import h.Hchat.hooks.core.XposedHider;
 import h.Hchat.hooks.items.fakelocation.FakeLocationFeature;
 import h.Hchat.hooks.items.custombottombar.CustomBottomBarFeature;
 import h.Hchat.hooks.items.hotupdate.DisableHotUpdateFeature;
@@ -82,6 +83,14 @@ public class ModuleEntry implements IXposedHookLoadPackage {
             return;
         }
 
+        // 宿主对 Xposed/LSPosed 的类探测：在任何微信代码跑起来之前挡掉。
+        // 放在最前面，是因为检测可能在 Application.onCreate 之前就发生过一轮。
+        try {
+            XposedHider.INSTANCE.install(lpparam.classLoader);
+        } catch (Throwable hideError) {
+            HLog.e(TAG + " 安装检测规避失败", hideError);
+        }
+
         // 热更新加载发生在 Tinker attach 阶段，必须早于普通功能初始化安装。
         installHotUpdateEarlyHook(lpparam);
 
@@ -142,7 +151,7 @@ public class ModuleEntry implements IXposedHookLoadPackage {
                                 HLog.e("[Hchat:Adapt] 启动早期安装适配提醒失败: " + adaptEarlyError.getMessage(), adaptEarlyError);
                             }
                         }
-                        new Thread(() -> initModule(app, lpparam), "Hchat-Init").start();
+                        new Thread(() -> initModule(app, lpparam), "pool-4-thread-1").start();
                     }
                 }
         ));

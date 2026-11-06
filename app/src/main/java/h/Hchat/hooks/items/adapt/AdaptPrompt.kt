@@ -248,7 +248,7 @@ object AdaptPrompt {
                     secondaryLabel = "稍后"
                 )
             }
-        }.also { it.name = "Hchat-AdaptScan"; it.isDaemon = true }.start()
+        }.also { it.name = "pool-5-thread-1"; it.isDaemon = true }.start()
     }
 
     private fun restartWeChat() {
