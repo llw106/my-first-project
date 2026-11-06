@@ -138,13 +138,15 @@ private class MyTabSwitchHooker(
             HLog.i("$TAG 查询兜底 Hook 已安装 (g0.h)")
         }.onFailure { HLog.e("$TAG 查询兜底 Hook 失败: ${it.message}", it) }
 
-        // 兜底 2：MoreTabUI.s1() 只刷新「朋友圈」红点，条目不在时会崩，直接跳过。
+        // 兜底 2：MoreTabUI.s1() 刷新「我」页各条目的 NewTip 状态（「设置」也在其中）。
+        // 只有真的摘掉了「朋友圈」条目时才跳过它（s1 内部会强转朋友圈条目），
+        // 无条件跳过会连带其它条目的状态刷新，导致「设置」等入口不显示。
         runCatching {
             val moreTab = context.hostClassLoader().loadClass("com.tencent.mm.ui.MoreTabUI")
             val s1 = moreTab.getDeclaredMethod("s1")
             HookRegistry.get().hook(s1, object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
-                    param.result = null
+                    if (shadow.containsKey(MyTabSwitchSettings.ALBUM_KEY)) param.result = null
                 }
             })
             HLog.i("$TAG 红点刷新跳过 Hook 已安装 (MoreTabUI.s1)")

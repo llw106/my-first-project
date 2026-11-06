@@ -53,6 +53,9 @@ object MyTabSwitchSettings {
     const val ANCHOR_KEY = "settings_mm_favorite"
     const val ANCHOR_TITLE = "个人信息"
 
+    /** 「朋友圈」条目 key：MoreTabUI.s1() 会强转它，摘掉后必须跳过 s1。 */
+    const val ALBUM_KEY = "settings_my_album"
+
     fun isEnabled(sp: SharedPreferences): Boolean = try {
         sp.getBoolean(KEY_ENABLE, DEFAULT_ENABLE)
     } catch (_: Throwable) {
